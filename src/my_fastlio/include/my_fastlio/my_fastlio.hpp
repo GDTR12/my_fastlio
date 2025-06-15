@@ -40,7 +40,7 @@ private:
 
     void lioThread();
 
-    ieskf::IESKF<StateType> ieskf;
+    // ieskf::IESKF<StateType> ieskf;
 
     std::shared_ptr<std::thread> main_thread_;
 

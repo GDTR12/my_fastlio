@@ -3,4 +3,5 @@
 build/
 install/
 devel/
+src/my_fastlio/cmake
 src/my_fastlio/bag

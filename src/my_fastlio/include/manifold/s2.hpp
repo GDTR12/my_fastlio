@@ -25,9 +25,9 @@ public:
     S2(): Base(){}
 
     // TODO:
-    S2 boxplus_impl(const Tangent& tangent)
+    void boxplus_impl(const Tangent& tangent)
     {
-        return S2(Base::Identity());
+        // return S2(Base::Identity());
     }
 };
 

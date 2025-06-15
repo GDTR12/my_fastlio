@@ -1,7 +1,10 @@
 #pragma once
 
 #include <Eigen/Core>
+#include <array>
+#include <cstddef>
 #include <tuple>
+#include <utility>
 
 
 namespace manifold{
@@ -16,9 +19,9 @@ public:
     static constexpr int DOF = ManifoldTraits<Derived>::DOF;
     static constexpr int DIM = ManifoldTraits<Derived>::DIM;
 
-    Derived boxplus(const Eigen::Matrix<double, DOF, 1>& tangent) const
+    void boxplus(const Eigen::Matrix<double, DOF, 1>& tangent)
     {
-        static_cast<const Derived*>(this)->boxplus_impl(tangent);
+        static_cast<Derived*>(this)->boxplus_impl(tangent);
     }
 
     static Derived Identity(){return Derived::Identity();}
@@ -29,11 +32,49 @@ template<typename... Args>
 class Manifolds
 {
 public: 
-    std::tuple<Args...> data;
     Manifolds()
     {
         data = std::make_tuple(Args{}...);
     }
+
+    static constexpr int DIM = (ManifoldTraits<Args>::DIM + ...);
+    static constexpr int DOF = (ManifoldTraits<Args>::DOF + ...);
+
+    void boxplus(const Eigen::Matrix<double, DOF, 1>& delta)
+    {
+        boxplus_impl<0>(delta, 0);
+    }
+
+private:
+
+    static constexpr std::array<int, sizeof...(Args)> createOffset()
+    {
+        constexpr std::array<int, sizeof...(Args)> dofs;
+        constexpr std::array<int, sizeof...(Args)> offset;
+        offset[0] = 0;
+        for(int i = 1; i < sizeof...(Args); i++)
+        {
+            offset[i] = offset[i - 1] + dofs[i - 1];
+        }
+        return offset;
+    }
+
+    template<std::size_t I>
+    void boxplus_impl(const Eigen::Matrix<double, DOF, 1>& delta, int offset)
+    {
+        if constexpr (I == sizeof...(Args)){
+            return;
+        }else{
+            using Type = std::tuple_element_t<I, std::tuple<Args...>>;
+            constexpr std::size_t dof = Type::DOF;
+            auto tangent = delta.template segment<dof>(offset);
+            std::get<I>(data).boxplus(tangent);
+            boxplus_impl<I+1>(delta, offset + dof);
+        }
+    }
+
+    std::tuple<Args...> data;
+    static constexpr std::array<int, sizeof...(Args)> IDX_LST = createOffset();
     
 };
 

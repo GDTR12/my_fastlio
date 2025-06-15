@@ -27,9 +27,9 @@ public:
         *this = initial;
     }
 
-    Vector<N> boxplus_impl(const Base& delta)
+    void boxplus_impl(const Base& delta)
     {
-        return *this + delta;
+        *this = Vector(*this + delta);
     }
 
 };

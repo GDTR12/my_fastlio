@@ -28,9 +28,9 @@ public:
       : Sophus::SO3<double>(other)
     {}
 
-    SO3 boxplus_impl(const Eigen::Matrix<double, DOF, 1>& delta)
+    void boxplus_impl(const Eigen::Matrix<double, DOF, 1>& delta)
     {
-        return SO3((*this) * Base::exp(delta));
+        *this = SO3((*this) * Base::exp(delta));
     }
 
     static SO3 Identity(){return Base();}
