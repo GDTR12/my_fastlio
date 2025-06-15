@@ -1,0 +1,21 @@
+<launch>
+    <!-- Launch file for my_fast_lio -->
+
+    <!-- Set parameters -->
+    <param name="use_sim_time" value="false" />
+
+    <rosparam command="load" file="$(find my_fastlio)/config/my_fastlio.yaml" />
+
+    <!-- 添加rviz -->
+    <node pkg="rviz" type="rviz" name="rviz" output="screen">
+        <param name="use_sim_time" value="false"/>
+        <param name="config" value="$(find my_fastlio)/rviz/my_fastlio.rviz"/>
+    </node>
+
+    <!-- Start the node -->
+    <node pkg="my_fastlio" type="my_fastlio_node" name="my_fastlio_node" output="screen">
+    </node>
+
+
+
+</launch>

@@ -1,0 +1,15 @@
+lidar_topic: "/livox/lidar"
+imu_topic: "/livox/imu"
+
+
+lidar_type: "livox" 
+
+extrinsic:
+  rotation: [1.0, 0.0, 0.0, 0.0] # Quaternion
+  translation: [-0.011, -0.02329, 0.04412] # Translation vector
+
+
+
+
+
+
