@@ -14,7 +14,7 @@ struct ManifoldTraits<Vector<N>>
 };
 
 template<int N>
-class Vector : public ManifoldBase<Vector<N>>, Eigen::Matrix<double, N, 1>
+class Vector : public ManifoldBase<Vector<N>>, public Eigen::Matrix<double, N, 1>
 {
 public:
     using Base = Eigen::Matrix<double, N, 1>;
@@ -23,9 +23,8 @@ public:
     Vector<N>():Base(){}
 
     Vector<N>(const Base& initial)
-    {
-        *this = initial;
-    }
+        : Base(initial)
+    {}
 
     void boxplus_impl(const Base& delta)
     {

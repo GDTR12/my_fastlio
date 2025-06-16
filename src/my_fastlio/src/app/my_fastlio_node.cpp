@@ -1,3 +1,4 @@
+#include <memory>
 #include <ros/ros.h>
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -12,26 +13,33 @@
 #include "my_fastlio/my_fastlio.hpp"
 #include "livox_ros_driver/CustomMsg.h"
 #include "manifold/manifold.hpp"
+#include "ros/rate.h"
 
 using namespace my_fastlio;
 
 MyFastLIO lio;
+std::string imu_topic;
+std::string lidar_topic;
+M3T R_ItoL;
+V3T t_ItoL;
+
 
 
 void paramFetch(ros::NodeHandle& nh)
 {
-    MyFastLIOParam& param = MyFastLIOParam::createInstance();
-    nh.getParam("imu_topic", param.imu_topic);
-    nh.getParam("lidar_topic", param.lidar_topic);
+    nh.getParam("imu_topic", imu_topic);
+    nh.getParam("lidar_topic", lidar_topic);
 
     std::vector<double> R_ItoL_vec(4);
     std::vector<double> t_ItoL_vec(3);
     nh.getParam("extrinsic/rotation", R_ItoL_vec);
-    nh.getParam("extrinsic/translation", R_ItoL_vec);
+    nh.getParam("extrinsic/translation", t_ItoL_vec);
 
     QuaT q_ItoL(R_ItoL_vec[0], R_ItoL_vec[1], R_ItoL_vec[2], R_ItoL_vec[3]);
-    param.R_ItoL = q_ItoL.toRotationMatrix();
-    param.t_ItoL = Eigen::Vector3d(t_ItoL_vec[0], t_ItoL_vec[1], t_ItoL_vec[2]);
+    R_ItoL = q_ItoL.toRotationMatrix();
+    t_ItoL = Eigen::Vector3d(t_ItoL_vec[0], t_ItoL_vec[1], t_ItoL_vec[2]);
+    std::cout << "imu topic: " << imu_topic << std::endl;
+    std::cout << "lidar topic: " << lidar_topic << std::endl;
 }
 
 
@@ -41,7 +49,6 @@ void imuCallback(const sensor_msgs::ImuConstPtr& imu_msg)
     imu_data->time = imu_msg->header.stamp.toSec();
     imu_data->w = Eigen::Vector3d(imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
     imu_data->a = Eigen::Vector3d(imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z);
-    
     lio.imuAsyncPushImu(imu_data);
 }
 
@@ -57,11 +64,17 @@ void lidarPointCloud2Callback(const sensor_msgs::PointCloud2ConstPtr& lidar_msg)
     // lio.lidarAsyncPushLidar(cloud);
 }
 
+void lioUpdateCallback(std::shared_ptr<MyFastLIO::CallbackInfo> info)
+{
+    std::cout << info->time << ": " << info->pose.unit_quaternion().coeffs().transpose() << ", " << info->pose.translation().transpose() << std::endl;
+}
+
 
 void lidarLivoxCallback(const livox_ros_driver::CustomMsgConstPtr& lidar_msg)
 {
-    CloudPtr cloud(new CloudT);
-    cloud->header.stamp = lidar_msg->header.stamp.toSec();
+    std::shared_ptr<my_fastlio::LidarData> lidar_data(new my_fastlio::LidarData);
+    lidar_data->time = lidar_msg->header.stamp.toSec();
+    CloudPtr cloud = lidar_data->cloud;
     cloud->header.frame_id = lidar_msg->header.frame_id;
     cloud->width = lidar_msg->point_num;
     cloud->height = 1;
@@ -82,7 +95,7 @@ void lidarLivoxCallback(const livox_ros_driver::CustomMsgConstPtr& lidar_msg)
             cloud->points.push_back(point);
         }
     }
-    lio.lidarAsyncPushLidar(cloud);
+    lio.lidarAsyncPushLidar(lidar_data);
 }
 
 int main(int argc, char** argv) 
@@ -91,9 +104,7 @@ int main(int argc, char** argv)
     ros::NodeHandle nh;
     paramFetch(nh);
 
-    MyFastLIOParam& param = MyFastLIOParam::createInstance();
-
-    ros::Subscriber imu_sub = nh.subscribe(param.imu_topic, 1000, imuCallback);
+    ros::Subscriber imu_sub = nh.subscribe(imu_topic, 1000, imuCallback);
 
     std::string lidar_type;
     nh.getParam("lidar_type", lidar_type);
@@ -102,16 +113,21 @@ int main(int argc, char** argv)
     ros::Subscriber lidar_sub;
 
     if (lidar_type == "livox"){
-        lidar_sub = nh.subscribe(param.lidar_topic, 1000, lidarLivoxCallback);
+        lidar_sub = nh.subscribe(lidar_topic, 1000, lidarLivoxCallback);
     }else{
-        lidar_sub = nh.subscribe(param.lidar_topic, 1000, lidarPointCloud2Callback);
+        lidar_sub = nh.subscribe(lidar_topic, 1000, lidarPointCloud2Callback);
     }
 
+    lio.setR_ItoL(R_ItoL)
+       .setp_ItoL(t_ItoL);
+    lio.setUpdateCallback(lioUpdateCallback);
+    lio.start();
 
-
+    ros::Rate rate(10);
     while(ros::ok())
     {
         ros::spinOnce();
+        rate.sleep();
     }
 
     ros::shutdown();

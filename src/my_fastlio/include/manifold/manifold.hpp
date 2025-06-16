@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 
 
@@ -45,6 +46,13 @@ public:
         boxplus_impl<0>(delta, 0);
     }
 
+    template<std::size_t N>
+    static decltype(auto) get(std::tuple<Args...>& tuple)
+    {
+        return std::get<N>(tuple);
+    }
+
+    std::tuple<Args...> data;
 private:
 
     static constexpr std::array<int, sizeof...(Args)> createOffset()
@@ -73,7 +81,6 @@ private:
         }
     }
 
-    std::tuple<Args...> data;
     static constexpr std::array<int, sizeof...(Args)> IDX_LST = createOffset();
     
 };

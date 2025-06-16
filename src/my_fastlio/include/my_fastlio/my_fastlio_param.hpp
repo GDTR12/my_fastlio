@@ -1,5 +1,6 @@
 #pragma once
 #include <Eigen/Dense>
+#include <memory>
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
 
@@ -9,6 +10,7 @@ namespace my_fastlio
 using V3T = Eigen::Vector3d;
 using QuaT = Eigen::Quaterniond;
 using M3T = Eigen::Matrix3d;
+using M2T = Eigen::Matrix2d;
 using M4T = Eigen::Matrix4d;
 using PointXYZ = pcl::PointXYZ;
 using PointXYZI = pcl::PointXYZ;
@@ -37,35 +39,40 @@ struct ImuData
     V3T a; // linear acceleration
 };
 
-
-class MyFastLIOParam
+struct LidarData
 {
-private:
-    MyFastLIOParam(){}
-public:
-
-    static MyFastLIOParam& createInstance()
-    {
-        static MyFastLIOParam instance;
-        return instance;
-    }
-
-    ~MyFastLIOParam() = default;
-
-    std::string imu_topic;
-    std::string lidar_topic;
-    Eigen::Matrix3d R_ItoL;
-    Eigen::Vector3d t_ItoL;
-    
-    
-    Eigen::Matrix4d getTransformMatrix()
-    {
-        Eigen::Matrix4d T_ItoL = Eigen::Matrix4d::Identity();
-        T_ItoL.block<3, 3>(0, 0) = R_ItoL;
-        T_ItoL.block<3, 1>(0, 3) = t_ItoL;
-        return T_ItoL;
-    }
+    double time = 0.0;
+    CloudPtr cloud = pcl::make_shared<CloudT>();
 };
+
+// class MyFastLIOParam
+// {
+// private:
+//     MyFastLIOParam(){}
+// public:
+
+//     static MyFastLIOParam& createInstance()
+//     {
+//         static MyFastLIOParam instance;
+//         return instance;
+//     }
+
+//     ~MyFastLIOParam() = default;
+
+//     std::string imu_topic;
+//     std::string lidar_topic;
+//     Eigen::Matrix3d R_ItoL;
+//     Eigen::Vector3d t_ItoL;
+    
+    
+//     Eigen::Matrix4d getTransformMatrix()
+//     {
+//         Eigen::Matrix4d T_ItoL = Eigen::Matrix4d::Identity();
+//         T_ItoL.block<3, 3>(0, 0) = R_ItoL;
+//         T_ItoL.block<3, 1>(0, 3) = t_ItoL;
+//         return T_ItoL;
+//     }
+// };
 
 
 } // namespace my_fastlio
