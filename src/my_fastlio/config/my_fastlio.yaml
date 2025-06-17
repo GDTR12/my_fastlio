@@ -5,8 +5,8 @@ imu_topic: "/livox/imu"
 lidar_type: "livox" 
 
 extrinsic:
-  rotation: [1.0, 0.0, 0.0, 0.0] # Quaternion
-  translation: [-0.011, -0.02329, 0.04412] # Translation vector
+  rotation: [1.0, 0.0, 0.0, 0.0] # Quaternion [w,x,y,z]
+  translation: [ 0.04165, 0.02326, -0.0284 ] # Translation vector
 
 
 

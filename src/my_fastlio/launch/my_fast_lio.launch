@@ -13,8 +13,8 @@
     </node>
 
     <!-- Start the node -->
-    <node pkg="my_fastlio" type="my_fastlio_node" name="my_fastlio_node" output="screen"  launch-prefix="gdbserver localhost:3000">
-    <!-- <node pkg="my_fastlio" type="my_fastlio_node" name="my_fastlio_node" output="screen"> -->
+    <!-- <node pkg="my_fastlio" type="my_fastlio_node" name="my_fastlio_node" output="screen"  launch-prefix="gdbserver localhost:3000"> -->
+    <node pkg="my_fastlio" type="my_fastlio_node" name="my_fastlio_node" output="screen">
     </node>
 
 </launch>
