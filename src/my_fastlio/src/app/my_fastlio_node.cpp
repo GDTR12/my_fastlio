@@ -108,7 +108,7 @@ void lioUpdateCallback(std::shared_ptr<MyFastLIO::CallbackInfo> info)
         pub_map.publish(map_msg);
     }
 
-    // std::cout << "update: " << "t: " << info->time << ", " << "q: " << info->pose.unit_quaternion().coeffs().transpose() << ", t" << info->pose.translation().transpose() << std::endl;
+    // std::cout << "update: " << "time: " << info->time << "\nq: " << info->pose.unit_quaternion().coeffs().transpose() << "\nt: " << info->pose.translation().transpose() << std::endl;
     // std::cout << "velocity: " << info->vel.transpose() << std::endl;
 }
 

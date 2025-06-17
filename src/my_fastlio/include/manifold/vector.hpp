@@ -20,7 +20,7 @@ public:
     using Base = Eigen::Matrix<double, N, 1>;
     using Tangent = Eigen::Matrix<double, N, 1>;
 
-    Vector<N>():Base(){}
+    Vector<N>():Base(Base::Zero()){}
 
     Vector<N>(const Base& initial)
         : Base(initial)

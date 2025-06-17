@@ -3,7 +3,25 @@ project(my_fastlio)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++17)
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+# === 自动包含 cmake/*.cmake 的宏 ===
+macro(include_all_config_cmake_files)
+    # 设置路径（默认是 cmake 目录）
+    set(CONFIG_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}/cmake")
+
+    if(EXISTS "${CONFIG_CMAKE_DIR}")
+        file(GLOB CONFIG_CMAKE_FILES "${CONFIG_CMAKE_DIR}/*.cmake")
+
+        foreach(config_file ${CONFIG_CMAKE_FILES})
+            message(STATUS "Including config: ${config_file}")
+            include(${config_file})
+        endforeach()
+    else()
+        message(WARNING "Config directory not found: ${CONFIG_CMAKE_DIR}")
+    endif()
+endmacro()
+
+include_all_config_cmake_files()
+
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages

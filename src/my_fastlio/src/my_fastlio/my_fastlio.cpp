@@ -1,5 +1,6 @@
 #include "my_fastlio/my_fastlio.hpp"
 #include "Eigen/src/Core/Matrix.h"
+#include "Eigen/src/Geometry/Quaternion.h"
 #include "ieskf/ieskf.hpp"
 #include "manifold/so3.hpp"
 #include "my_fastlio/my_fastlio_param.hpp"
@@ -7,6 +8,7 @@
 #include "pcl/common/transforms.h"
 #include "pcl_conversions/pcl_conversions.h"
 #include <functional>
+#include <iomanip>
 #include <memory>
 #include <mutex>
 #include <sophus/se3.hpp>
@@ -153,11 +155,43 @@ void MyFastLIO::handlePack()
 
 void MyFastLIO::lidarCompensation(std::shared_ptr<MeasurePack> meas, const std::deque<std::pair<double, Sophus::SE3d>>& tmp_odo)
 {
-    CloudT cloud;
-    // std::sort(cloud.points.begin(), cloud.points.end(), [](){
-
-    // });
-    
+    auto& cloud = meas->cloud->cloud;
+    auto getPose = [&tmp_odo](double t, Sophus::SE3d& ret){
+        int idx = 0;
+        for (int i = 0; i < tmp_odo.size() - 1; i++){
+            double t0 = tmp_odo[i].first, t1 = tmp_odo[i + 1].first;
+            double slerp_coeff = (t - t0) / (t1 - t0);
+            if (t > t0 && t < t1){
+                auto& se3_0 = tmp_odo[i].second;
+                auto& se3_2 = tmp_odo[i + 1].second;
+                QuaT so3 = se3_0.unit_quaternion().slerp(slerp_coeff, se3_2.unit_quaternion());
+                V3T trans = (1 - slerp_coeff) * tmp_odo[i].second.translation() + slerp_coeff * tmp_odo[i + 1].second.translation();
+                ret = Sophus::SE3d(so3, trans);
+                return true;
+            }
+        }
+        return false;
+    };
+    Sophus::SE3d T_IktoI0 = Sophus::SE3d(getM(kf.normal_state, R), getM(kf.normal_state, p)).inverse();
+    Sophus::SE3d T_ItoL(getM(kf.normal_state, R_ItoL), getM(kf.normal_state, p_ItoL));
+    Sophus::SE3d T_LtoI = T_ItoL.inverse();
+    int count = 0;
+    V3T ava_change; ava_change.setZero();
+    for (auto& p_inj : cloud->points)
+    {
+        double t = meas->cloud->time - p_inj.curvature;
+        Sophus::SE3d T_I0toIj;
+        if (!getPose(t, T_I0toIj)){
+            continue;
+        }
+        V3T p_ink = T_LtoI * (T_IktoI0 * T_I0toIj) * T_ItoL * V3T(p_inj.getVector3fMap().cast<double>());
+        ava_change += (p_ink - p_inj.getVector3fMap().cast<double>()).cwiseAbs();
+        p_inj.x = p_ink.x();
+        p_inj.y = p_ink.y();
+        p_inj.z = p_ink.z();
+        count++;
+    }
+    // std::cout << "undistort: " << double(count) / double(cloud->points.size()) * 100 << "% avarage change: " << ava_change.transpose() / double(count) << std::endl;
 }
 
 // TODO:

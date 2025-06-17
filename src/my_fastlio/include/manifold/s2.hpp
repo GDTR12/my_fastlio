@@ -22,7 +22,7 @@ public:
     using Tangent = Eigen::Matrix<double, 2, 1>;
 
     S2(const Base& data): Base(data){}
-    S2(): Base(){}
+    S2(): Base(Base::Zero()){}
 
     // TODO:
     void boxplus_impl(const Tangent& tangent)

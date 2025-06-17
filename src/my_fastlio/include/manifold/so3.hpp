@@ -21,7 +21,7 @@ public:
     using Tangent = Eigen::Matrix<double, 3, 1>;
 
     SO3()
-      : Sophus::SO3<double>()
+      : Sophus::SO3<double>(Eigen::Matrix3d::Identity())
     {}
 
     SO3(const Sophus::SO3d& other)
