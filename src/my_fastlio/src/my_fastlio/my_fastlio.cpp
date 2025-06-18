@@ -1,11 +1,13 @@
 #include "my_fastlio/my_fastlio.hpp"
 #include "Eigen/src/Core/Matrix.h"
+#include "Eigen/src/Core/util/Memory.h"
 #include "Eigen/src/Geometry/Quaternion.h"
 #include "ieskf/ieskf.hpp"
 #include "manifold/so3.hpp"
 #include "my_fastlio/my_fastlio_param.hpp"
 #include "pcl/common/io.h"
 #include "pcl/common/transforms.h"
+#include "pcl/impl/point_types.hpp"
 #include "pcl_conversions/pcl_conversions.h"
 #include <functional>
 #include <iomanip>
@@ -17,7 +19,9 @@
 #include <pcl/registration/ndt.h>
 #include <pcl/filters/random_sample.h>
 #include <utility>
-
+#include <omp.h>
+#include <vector>
+#include "utils/slam_utils.hpp"
 
 
 namespace my_fastlio
@@ -177,21 +181,47 @@ void MyFastLIO::lidarCompensation(std::shared_ptr<MeasurePack> meas, const std::
     Sophus::SE3d T_LtoI = T_ItoL.inverse();
     int count = 0;
     V3T ava_change; ava_change.setZero();
-    for (auto& p_inj : cloud->points)
+    auto t1 = std::chrono::high_resolution_clock::now();
+    omp_set_num_threads(8);  // 实测8线程处理较快
+    #pragma omp parallel
     {
-        double t = meas->cloud->time - p_inj.curvature;
-        Sophus::SE3d T_I0toIj;
-        if (!getPose(t, T_I0toIj)){
-            continue;
+        V3T local_change = V3T::Zero();
+        int local_count = 0;
+
+        #pragma omp for nowait
+        for (int i = 0; i < cloud->points.size(); i++)
+        {
+            auto& p_inj = cloud->points[i];
+            double t = meas->cloud->time - p_inj.curvature;
+            Sophus::SE3d T_I0toIj;
+            if (!getPose(t, T_I0toIj)){
+                continue;
+            }
+            V3T p_ink = T_LtoI * (T_IktoI0 * T_I0toIj) * T_ItoL * V3T(p_inj.getVector3fMap().cast<double>());
+            local_change += (p_ink - p_inj.getVector3fMap().cast<double>()).cwiseAbs();
+            p_inj.x = p_ink.x();
+            p_inj.y = p_ink.y();
+            p_inj.z = p_ink.z();
+            local_count++;
         }
-        V3T p_ink = T_LtoI * (T_IktoI0 * T_I0toIj) * T_ItoL * V3T(p_inj.getVector3fMap().cast<double>());
-        ava_change += (p_ink - p_inj.getVector3fMap().cast<double>()).cwiseAbs();
-        p_inj.x = p_ink.x();
-        p_inj.y = p_ink.y();
-        p_inj.z = p_ink.z();
-        count++;
+
+        #pragma omp critical
+        {
+            ava_change += local_change;
+            count += local_count;
+        }
+
     }
-    // std::cout << "undistort: " << double(count) / double(cloud->points.size()) * 100 << "% avarage change: " << ava_change.transpose() / double(count) << std::endl;
+
+    auto t2 = std::chrono::high_resolution_clock::now();
+    auto add_duration = std::chrono::duration_cast<std::chrono::microseconds>(t2-t1).count();      
+    printf("Add point time cost is %0.3f ms\n",float(add_duration)/1e3);
+    std::cout << "undistort(" << count << "): " << double(count) / double(cloud->points.size()) * 100 << "% avarage change: " << ava_change.transpose() / double(count) << std::endl;
+    #ifdef _OPENMP
+    std::cout << "OpenMP enabled with " << omp_get_max_threads() << " threads\n";
+    #else
+    std::cout << "OpenMP NOT enabled\n";
+    #endif
 }
 
 // TODO:
@@ -288,6 +318,75 @@ void MyFastLIO::staticStateIMUInitialize()
     std::cout << "R0: " << R0.coeffs().transpose() << std::endl;
 }
 
+bool MyFastLIO::esti_plane(V4T &pca_result, const KDTree::PointVector &point, const float &threshold)
+{
+    Eigen::Matrix<double, plane_N_search, 3> A;
+    Eigen::Matrix<double, plane_N_search, 1> b;
+    A.setZero();
+    b.setOnes();
+    b *= -1.0f;
+
+    for (int j = 0; j < plane_N_search; j++)
+    {
+        A(j,0) = point[j].x;
+        A(j,1) = point[j].y;
+        A(j,2) = point[j].z;
+    }
+
+    Eigen::Matrix<double, 3, 1> normvec = A.colPivHouseholderQr().solve(b);
+
+    double n = normvec.norm();
+    pca_result(0) = normvec(0) / n;
+    pca_result(1) = normvec(1) / n;
+    pca_result(2) = normvec(2) / n;
+    pca_result(3) = 1.0 / n;
+
+    for (int j = 0; j < plane_N_search; j++)
+    {
+        if (fabs(pca_result(0) * point[j].x + pca_result(1) * point[j].y + pca_result(2) * point[j].z + pca_result(3)) > threshold)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+void MyFastLIO::buildmapAndUpdate()
+{
+    CloudPtr new_cloud(new CloudT);
+    Sophus::SE3d T_L0toLi(getM(kf.normal_state, R), getM(kf.normal_state, p));
+    pcl::transformPointCloud(*last_meas_->cloud->cloud, *new_cloud, T_L0toLi.matrix().cast<float>());
+    if (map->empty()){
+        *map += *new_cloud;
+        ikd_tree.Build(map->points);
+    }else{
+        auto start = slam_utils::TimerHelper::start();
+        CloudXYZPtr filtered_cloud(new CloudXYZ);
+        pcl::RandomSample<PointXYZ> sample;
+        CloudXYZPtr xyz_cloud(new CloudXYZ);
+        pcl::copyPointCloud(*new_cloud, *xyz_cloud);
+        sample.setSample(frame_residual_count);
+        sample.setInputCloud(xyz_cloud);
+        sample.filter(*filtered_cloud);
+        // std::cout << "sample:" << filtered_cloud->size() << ", cost: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl;
+
+        for (auto p : *filtered_cloud)
+        {
+            PointT center; 
+            pcl::copyPoint(p, center);
+            KDTree::PointVector point_lst;
+            std::vector<float> dists;
+            ikd_tree.Nearest_Search(center, plane_N_search, point_lst, dists);
+            
+            V4T plane_coeffs;
+            if (esti_plane(plane_coeffs, point_lst, 0.1)){
+
+            }
+        }
+        // *map += *new_cloud;
+        // ikd_tree.Add_Points(new_cloud->points, false);
+    }
+
+}
 
 void MyFastLIO::lioThread()
 {
@@ -295,7 +394,7 @@ void MyFastLIO::lioThread()
     while (true)
     {
         handlePack();
-
+        buildmapAndUpdate();
         if (updateCallback){
             std::shared_ptr<CallbackInfo> ret_info(new CallbackInfo);
             ret_info->time = last_meas_->cloud->time;

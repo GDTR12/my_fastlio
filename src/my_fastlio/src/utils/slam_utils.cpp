@@ -1,4 +1,5 @@
 #include "utils/slam_utils.hpp"
+#include <chrono>
 
 namespace slam_utils
 {

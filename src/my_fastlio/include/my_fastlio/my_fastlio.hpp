@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <sophus/se3.hpp>
 
+#include "ikd_Tree.h"
 #include "manifold/manifold.hpp"
 #include "manifold/s2.hpp"
 #include "manifold/so3.hpp"
@@ -71,7 +72,7 @@ public:
         V3T vel;
         V3T ba, bg;
         V3T grav;
-        CloudXYZPtr map;
+        CloudPtr map;
     };
 
     using IESKF = ieskf::IESKF<StateType, 12>;
@@ -130,6 +131,7 @@ public:
 
 private:
 
+    typedef KD_TREE<PointT> KDTree;
     bool isReady()
     {
         return R_ItoL_.has_value() &&
@@ -141,6 +143,11 @@ private:
     void lioThread();
 
     void handlePack();
+
+    
+    bool esti_plane(V4T &pca_result, const KDTree::PointVector &point, const float &threshold);
+
+    void buildmapAndUpdate();
 
     void lidarCompensation(std::shared_ptr<MeasurePack> meas, const std::deque<std::pair<double, Sophus::SE3d>>& tmp_odo);
 
@@ -175,7 +182,11 @@ private:
     bool inited_error_cov_ = false;
     bool inited_gravity_ = false;
 
-    CloudXYZPtr map = pcl::make_shared<CloudXYZ>();
+    CloudPtr map = pcl::make_shared<CloudT>();
+    KDTree ikd_tree;
+    const int frame_residual_count = 1500;
+    static constexpr int plane_N_search  = 5;
+
 };
 
 }

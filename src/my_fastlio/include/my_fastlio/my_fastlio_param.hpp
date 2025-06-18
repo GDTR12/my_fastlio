@@ -3,11 +3,13 @@
 #include <memory>
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
+#include "ikd_Tree.h"
 
 namespace my_fastlio
 {
     
 using V3T = Eigen::Vector3d;
+using V4T = Eigen::Vector4d;
 using QuaT = Eigen::Quaterniond;
 using M3T = Eigen::Matrix3d;
 using M2T = Eigen::Matrix2d;
@@ -30,6 +32,7 @@ using CloudT = pcl::PointCloud<PointT>;
 using CloudPtr = pcl::PointCloud<PointT>::Ptr;
 using CloudConstPtr = pcl::PointCloud<PointT>::ConstPtr;
 
+using PointIKDT = ikdTree_PointType;
 
 
 struct ImuData

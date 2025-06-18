@@ -3,6 +3,9 @@ project(my_fastlio)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++17)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp")
+
+
 # === 自动包含 cmake/*.cmake 的宏 ===
 macro(include_all_config_cmake_files)
     # 设置路径（默认是 cmake 目录）
@@ -40,6 +43,7 @@ find_package(PCL REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(fmt REQUIRED)
 find_package(Sophus REQUIRED)
+find_package(OpenMP REQUIRED)
 
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
@@ -146,12 +150,14 @@ include_directories(
 ## Declare a C++ library
 add_library(${PROJECT_NAME}
   src/${PROJECT_NAME}/my_fastlio.cpp
+  src/mapper/ikd-Tree/ikd-Tree/ikd_Tree.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
   ${CMAKE_CURRENT_LIST_DIR}/include
+  src/mapper/ikd-Tree/ikd-Tree
 )
 
 ## Add cmake target dependencies of the library
@@ -162,7 +168,8 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-add_executable(${PROJECT_NAME}_node src/app/my_fastlio_node.cpp)
+add_executable(${PROJECT_NAME}_node 
+               src/app/my_fastlio_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
