@@ -1,7 +1,7 @@
 #pragma once
 
-#include <ceres/ceres.h>
 #include <Eigen/Core>
+#include <Eigen/src/Geometry/Quaternion.h>
 #include <chrono>
 
 namespace slam_utils
