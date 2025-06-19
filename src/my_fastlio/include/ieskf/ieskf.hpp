@@ -15,7 +15,7 @@ namespace ieskf{
 
 // typedef mfd::Manifolds<mfd::SO3, mfd::Vector<3>, mfd::Vector<3>, mfd::Vector<3>, mfd::Vector<3>,
 //                         mfd::S2, mfd::SO3, mfd::Vector<3>> StateType;
-template<typename StateType, int DIM_NOISE>
+template<typename StateType, typename ControlType, int DIM_NOISE>
 class IESKF
 {
 public:
@@ -36,13 +36,13 @@ public:
         error_state.setZero();
     }
 
-    void predict(const ErrorStateType& delta_x)
+    void predict(const ErrorStateType& delta_x, const ControlType& u, const double dt)
     {
-        normal_state.boxplus(delta_x);
+        computeFxAndFw(fx, fw, normal_state, error_state, u, dt);
+        normal_state.boxplus(delta_x * dt);
         if (nullptr == computeFxAndFw){
             throw std::runtime_error("Function computeFxAndFw didn't initialized!");
         }
-        computeFxAndFw(fx, fw, normal_state);
         error_state = fx * error_state + fw * noise;
         error_cov = fx * error_cov * fx.transpose() + fw * noise_cov * fw.transpose();
         error_state.setZero();
@@ -58,7 +58,7 @@ public:
     NoiseType noise;
     ErrorStateConvarianceType error_cov;
     NoiseConvarianceType noise_cov;
-    std::function<void(ErrorPropagateFx& fx, ErrorPropagateFw& fw, const StateType& X)> computeFxAndFw;
+    std::function<void(ErrorPropagateFx& fx, ErrorPropagateFw& fw, const StateType& X, const ErrorStateType& delta_x, const ControlType& u, const double dt)> computeFxAndFw;
     ErrorPropagateFx fx;
     ErrorPropagateFw fw;
 

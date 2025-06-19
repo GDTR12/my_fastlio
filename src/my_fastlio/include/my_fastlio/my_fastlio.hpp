@@ -27,7 +27,7 @@ namespace my_fastlio
 constexpr char rot_str[] = "r";
 constexpr char g_str[] = "g";
 
-enum
+enum StateIDX
 {
     IDX_p,
     IDX_R,
@@ -39,6 +39,20 @@ enum
     IDX_g,
 };
 
+enum ControlIDX
+{
+    IDX_w,
+    IDX_a
+};
+
+enum NoiseIDX
+{
+    IDX_nw,
+    IDX_na,
+    IDX_nbw,
+    IDX_nba,
+};
+
 using namespace ieskf;
 
 namespace mfd = manifold;
@@ -48,8 +62,9 @@ class MyFastLIO
 {
 public:
     typedef mfd::Manifolds<mfd::Vector<3>, mfd::SO3, mfd::SO3, mfd::Vector<3>, mfd::Vector<3>, mfd::Vector<3>, mfd::Vector<3>,
-                           mfd::S2> StateType;
+                           mfd::S2<98090, 10000, mfd::CLOSE_Z>> StateType;
 
+    typedef mfd::Manifolds<mfd::Vector<3>, mfd::Vector<3>> ControlType;
 
     struct MeasurePack
     {
@@ -75,7 +90,7 @@ public:
         CloudPtr map;
     };
 
-    using IESKF = ieskf::IESKF<StateType, 12>;
+    using IESKF = ieskf::IESKF<StateType, ControlType,12>;
 
     MyFastLIO();
     ~MyFastLIO();
@@ -153,7 +168,7 @@ private:
 
     void imuPropagate(const ImuData& imu0, const ImuData& imu1);
 
-    void computeFxAndFw(IESKF::ErrorPropagateFx& fx, IESKF::ErrorPropagateFw& fw, const StateType& X);
+    void computeFxAndFw(IESKF::ErrorPropagateFx& fx, IESKF::ErrorPropagateFw& fw, const StateType& X, const IESKF::ErrorStateType& delta_x,const ControlType& u, const double dt);
 
     void staticStateIMUInitialize();
 

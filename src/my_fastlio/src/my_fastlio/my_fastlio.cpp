@@ -31,7 +31,13 @@ namespace my_fastlio
 MyFastLIO::MyFastLIO()
 {
 
-    kf.computeFxAndFw = std::bind(&MyFastLIO::computeFxAndFw, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3);
+    kf.computeFxAndFw = std::bind(&MyFastLIO::computeFxAndFw, this, 
+                                  std::placeholders::_1, 
+                                  std::placeholders::_2, 
+                                  std::placeholders::_3, 
+                                  std::placeholders::_4, 
+                                  std::placeholders::_5,
+                                  std::placeholders::_6);
 
     MyFastLIO::IESKF::NoiseConvarianceType noise_cov;
     MyFastLIO::IESKF::ErrorStateConvarianceType error_cov;
@@ -115,8 +121,11 @@ void MyFastLIO::imuPropagate(const ImuData& imu0, const ImuData& imu1)
     delta.segment<3>(IDX_p * 3) = getM(X, v) +  0.5 * dt * (getM(X, R).matrix() * (a - getM(X, ba)) + getM(X, g));
     delta.segment<3>(IDX_R * 3) = w - getM(X, bw);
     delta.segment<3>(IDX_v * 3) = getM(X, R).matrix() * (a - getM(X, ba)) + getM(X, g);
-    delta *= dt;
-    kf.predict(delta);
+    // delta *= dt;
+    ControlType control;
+    getM(control, w) = w;
+    getM(control, a) = a;
+    kf.predict(delta, control, dt);
 }
 
 void MyFastLIO::handlePack()
@@ -131,7 +140,7 @@ void MyFastLIO::handlePack()
     std::deque<std::pair<double, Sophus::SE3d>> imu_odo;
 
     ImuData last_imu, curr_imu;
-    
+    auto start = slam_utils::TimerHelper::start();
     if (last_meas_ != nullptr){
         last_imu = last_meas_->imu_lst->back();
         curr_imu = meas->imu_lst->front();
@@ -150,6 +159,7 @@ void MyFastLIO::handlePack()
         imuPropagate(last_imu, curr_imu);
         imu_odo.push_back(std::make_pair(curr_imu.time, Sophus::SE3d(getM(kf.normal_state, R), getM(kf.normal_state, p))));
     }
+    std::cout << "imu propagate cost: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl; 
 
     lidarCompensation(meas, imu_odo);
 
@@ -215,20 +225,32 @@ void MyFastLIO::lidarCompensation(std::shared_ptr<MeasurePack> meas, const std::
 
     auto t2 = std::chrono::high_resolution_clock::now();
     auto add_duration = std::chrono::duration_cast<std::chrono::microseconds>(t2-t1).count();      
-    printf("Add point time cost is %0.3f ms\n",float(add_duration)/1e3);
-    std::cout << "undistort(" << count << "): " << double(count) / double(cloud->points.size()) * 100 << "% avarage change: " << ava_change.transpose() / double(count) << std::endl;
-    #ifdef _OPENMP
-    std::cout << "OpenMP enabled with " << omp_get_max_threads() << " threads\n";
-    #else
-    std::cout << "OpenMP NOT enabled\n";
-    #endif
+    std::cout << "undistort " << count << " points(" << float(add_duration)/1e3 <<" ms): " << double(count) / double(cloud->points.size()) * 100 << "% avarage change: " << ava_change.transpose() / double(count) << std::endl;
+    // #ifdef _OPENMP
+    // std::cout << "OpenMP enabled with " << omp_get_max_threads() << " threads\n";
+    // #else
+    // std::cout << "OpenMP NOT enabled\n";
+    // #endif
 }
 
 // TODO:
-void MyFastLIO::computeFxAndFw(IESKF::ErrorPropagateFx& fx, IESKF::ErrorPropagateFw& fw, const StateType& X)
+void MyFastLIO::computeFxAndFw(IESKF::ErrorPropagateFx& fx, IESKF::ErrorPropagateFw& fw, const StateType& X, const IESKF::ErrorStateType& delta_x, const ControlType& u, const double dt)
 {
     fx.setIdentity();
-    fw.setIdentity();
+    fw.setZero();
+    fx.block<3,3>(IDX_p * 3, IDX_v * 3) = dt * M3T::Identity();
+    fx.block<3,3>(IDX_R * 3, IDX_bw * 3) = -dt * Sophus::SO3d::leftJacobianInverse(dt * (getM(u, w) - getM(X, bw)));
+    fx.block<3,3>(IDX_R * 3, IDX_R * 3) = Sophus::SO3d::exp(-dt * (getM(u, w) - getM(X, bw))).matrix();
+    fx.block<3,3>(IDX_v * 3, IDX_R * 3) = -dt * getM(X, R).matrix() * Sophus::SO3d::hat(getM(u, a) - getM(X, ba));
+    fx.block<3,3>(IDX_v * 3, IDX_ba * 3) =  -dt * getM(X, R).matrix();
+    // fx.block<3,2>(IDX_v * 3, IDX_g * 3) = Eigen::Matrix<double, 3, 2>::Zero();
+    Eigen::Matrix<double,2,1> delta_g = delta_x.segment<2>(IDX_g * 3);
+    fx.block<3,2>(IDX_v * 3, IDX_g * 3) = dt * std::get<7>(X.data).boxplusJacobian(delta_g);
+
+    fw.block<3,3>(IDX_R * 3, IDX_nw * 3) = -dt * Sophus::SO3d::leftJacobianInverse(dt * (getM(u, w) - getM(X, bw)));
+    fw.block<3,3>(IDX_v * 3, IDX_na * 3) = -dt * getM(X, R).matrix();
+    fw.block<3,3>(IDX_bw * 3, IDX_nbw * 3) = -dt * M3T::Identity();
+    fw.block<3,3>(IDX_ba * 3, IDX_nba * 3) = -dt * M3T::Identity();
 }
 
 
