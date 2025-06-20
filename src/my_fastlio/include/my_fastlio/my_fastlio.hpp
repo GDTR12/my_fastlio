@@ -170,6 +170,8 @@ private:
 
     void computeFxAndFw(IESKF::ErrorPropagateFx& fx, IESKF::ErrorPropagateFw& fw, const StateType& X, const IESKF::ErrorStateType& delta_x,const ControlType& u, const double dt);
 
+    void computeHx(IESKF::ObserveMatrix& Hx, const StateType& X, const IESKF::ErrorStateType& delta_x);
+
     void staticStateIMUInitialize();
 
     IESKF kf;
