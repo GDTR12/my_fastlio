@@ -8,13 +8,16 @@
 #include <manifold/s2.hpp>
 #include <manifold/vector.hpp>
 #include <stdexcept>
+#include <iostream>
 
-namespace mfd = manifold;
 namespace ieskf{
 
 
+// namespace mfd = manifold;
 // typedef mfd::Manifolds<mfd::SO3, mfd::Vector<3>, mfd::Vector<3>, mfd::Vector<3>, mfd::Vector<3>,
-//                         mfd::S2, mfd::SO3, mfd::Vector<3>> StateType;
+//                         mfd::S2<10,10,1>, mfd::SO3, mfd::Vector<3>> StateType;
+// typedef mfd::Manifolds<mfd::SO3, mfd::Vector<3>, mfd::Vector<3>, mfd::Vector<3>, mfd::Vector<3>,
+//                         mfd::S2<10,10,1>, mfd::SO3, mfd::Vector<3>> ControlType;
 template<typename StateType, typename ControlType, int DIM_NOISE>
 class IESKF
 {
@@ -28,6 +31,8 @@ public:
     typedef Eigen::Matrix<double, DIM_ERROR_STATE, DIM_ERROR_STATE> ErrorStateConvarianceType;
     typedef Eigen::Matrix<double, DIM_NOISE, DIM_NOISE> NoiseConvarianceType;
     typedef Eigen::Matrix<double, Eigen::Dynamic, DIM_ERROR_STATE> ObserveMatrix;
+    typedef Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic> ObserveCovarianceType;
+    typedef Eigen::Matrix<double, Eigen::Dynamic, 1> ObserveResult;
 
     IESKF()
     {
@@ -48,9 +53,38 @@ public:
         error_state.setZero();
     }
 
-    void update(const ObserveMatrix& H, const Eigen::VectorXd& z, const Eigen::MatrixXd& v)
+    void update()
     {
-        
+        StateType& Xk = normal_state;
+        StateType X0 = normal_state;
+        ErrorStateType& deltaX = error_state;
+        ErrorStateConvarianceType& Pk = error_cov;
+
+        std::cout << std::get<7>(Xk.data).transpose() << std::endl;
+        Xk.boxplus(deltaX.setOnes() * 0.01);
+        std::cout << std::get<7>(Xk.data).transpose() << std::endl;
+        for (int i = 0; i < NUM_MAX_ITERATIONS; i++)
+        {
+            ObserveMatrix Hk; 
+            ObserveResult zk;
+            ObserveCovarianceType R;
+            typename StateType::JacAplusDminusX Jk_inv;
+            if (i == 0){
+                Jk_inv.setIdentity();
+            }else{
+                X0.invJacobianDelta_AplusDeltaminusX(Xk, Jk_inv);
+                Pk = Jk_inv * Pk * Jk_inv.transpose();
+            }
+            
+            // if (nullptr == computeHxAndR){
+            //     throw std::runtime_error("Function computeHxAndR didn't initialized!");
+            // }
+            // computeHxAndR(zk, Hk, R, Xk, X0);
+            ErrorStateType error = Xk.boxminus(X0);
+            std::cout << error.transpose() << std::endl;
+            exit(0);
+
+        }
     }
 
     StateType normal_state;
@@ -59,9 +93,11 @@ public:
     ErrorStateConvarianceType error_cov;
     NoiseConvarianceType noise_cov;
     std::function<void(ErrorPropagateFx& fx, ErrorPropagateFw& fw, const StateType& X, const ErrorStateType& delta_x, const ControlType& u, const double dt)> computeFxAndFw;
+    std::function<void(ObserveResult& zk, ObserveMatrix& H, ObserveCovarianceType& R, const StateType& Xk,const StateType& X)> computeHxAndR;
     ErrorPropagateFx fx;
     ErrorPropagateFw fw;
 
+    int NUM_MAX_ITERATIONS = 8;
 };
 
 }

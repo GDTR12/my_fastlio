@@ -1,0 +1,5 @@
+Sophus::leftJaco时不是 J_r
+Sophus::leftjacinverse 是不是 J_r 的 逆矩阵
+
+Sophus::SE3d se3; V3T v;
+v = se3 * v 是不是 se3.rotamat * v + se3.t;

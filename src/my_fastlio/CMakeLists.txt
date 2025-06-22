@@ -151,6 +151,7 @@ include_directories(
 add_library(${PROJECT_NAME}
   src/${PROJECT_NAME}/my_fastlio.cpp
   src/mapper/ikd-Tree/ikd-Tree/ikd_Tree.cpp
+  src/mapper/voxel_map_util.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC

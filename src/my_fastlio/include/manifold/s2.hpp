@@ -3,6 +3,7 @@
 
 #include <Eigen/Core>
 #include <sophus/so3.hpp>
+#include "Eigen/src/Geometry/Quaternion.h"
 #include "manifold.hpp"
 
 namespace manifold {
@@ -40,19 +41,32 @@ public:
     S2()
     {
         if (S2_Type == CLOSE_X) {
-            *this = Base::UnitY() * len;
-        }else if (S2_Type == CLOSE_Y){
-            *this = Base::UnitZ() * len;
-        }else{
             *this = Base::UnitX() * len;
+        }else if (S2_Type == CLOSE_Y){
+            *this = Base::UnitY() * len;
+        }else{
+            *this = Base::UnitZ() * len;
         }
     }
 
     void boxplus_impl(const Tangent& tangent)
     {
         auto Bx = computeBx();
-        *this = Sophus::SO3d::exp(Bx * tangent) * (*this);
+        *this = SO3Exp(Bx * tangent) * (*this);
     }
+
+    // Y:this X:other y \minus x 
+    Eigen::Matrix<double, 2, 1> boxminus_impl(const S2& other) const
+    {
+
+        const S2& Y = *this;
+        const S2& X = other;
+        auto BxT = computeBx().transpose();
+        auto xhaty = SO3Hat(X) * Y;
+        auto theta = Eigen::Quaterniond::FromTwoVectors(Y, X);
+        return BxT * theta.angularDistance(Eigen::Quaterniond::Identity()) * xhaty / xhaty.norm();
+    }
+
 
     S2& operator=(const Base& other)
     {
@@ -60,11 +74,21 @@ public:
         return *this;
     }
 
+    void jacobianDelta_AplusDeltaminusX(const S2& A, Eigen::Ref<Eigen::Matrix<double, 2, 2>> mat)
+    {
+        mat.setIdentity();
+    }
+
+    void invJacobianDelta_AplusDeltaminusX(const S2& A, Eigen::Ref<Eigen::Matrix<double, 2, 2>> mat)
+    {
+        mat.setIdentity();
+    }
+
     Eigen::Matrix<double, 3, 2> boxplusJacobian(const Tangent& u) const
     {
         Eigen::Matrix<double, 3, 2> Bx = computeBx();
         Eigen::Matrix<double, 3, 1> Bu = Bx * u;
-        return Sophus::SO3d::exp(Bu).matrix() * Sophus::SO3d::hat(*this) * Sophus::SO3d::leftJacobianInverse(Bu) * Bx;
+        return -SO3Exp(Bu).matrix() * SO3Hat(*this) * SO3Jr(Bu) * Bx;
     }
 
     S2 operator-(const S2& other) = delete;
@@ -76,7 +100,7 @@ private:
     {
         Eigen::Matrix<double, 3, 2> res;
         auto vec = this->data();
-        if (S2_Type == CLOSE_X){
+        if (S2_Type == CLOSE_Y){
             if (vec[1] + len > tolerance){
                 res << len - vec[0]*vec[0]/(len+vec[1]), -vec[0]*vec[2]/(len+vec[1]),
                         -vec[0], -vec[2],
@@ -87,19 +111,22 @@ private:
                 res(1, 1) = -1;
                 res(2, 0) = 1;
             }
-        }else if (S2_Type == CLOSE_Y){
-			if(vec[2] + len > tolerance)
-			{
+        }else if (S2_Type == CLOSE_Z){
+            res = Eigen::Matrix<double, 3,2>::Zero();
+
+
+			// if(std::abs(std::abs(vec[2]) - len) > tolerance)
+			// {
 				
-				res << len - vec[0]*vec[0]/(len+vec[2]), -vec[0]*vec[1]/(len+vec[2]),
-						-vec[0]*vec[1]/(len+vec[2]), len-vec[1]*vec[1]/(len+vec[2]),
-						-vec[0], -vec[1];
-				res /= len;
-			}else{
-				res = Eigen::Matrix<double, 3, 2>::Zero();
-				res(1, 1) = -1;
-				res(2, 0) = 1;
-			}
+			// 	res << len - vec[0]*vec[0]/(len+vec[2]), -vec[0]*vec[1]/(len+vec[2]),
+			// 			-vec[0]*vec[1]/(len+vec[2]), len-vec[1]*vec[1]/(len+vec[2]),
+			// 			-vec[0], -vec[1];
+			// 	res /= len;
+			// }else{
+			// 	res = Eigen::Matrix<double, 3, 2>::Zero();
+				res(0, 0) = 1;
+				res(1, 1) = 1;
+			// }
         }else{
             if(vec[0] + len > tolerance)
             {

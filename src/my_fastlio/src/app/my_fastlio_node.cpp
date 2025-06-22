@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <memory>
 #include <ros/ros.h>
 #include <Eigen/Core>
@@ -101,13 +102,14 @@ void lioUpdateCallback(std::shared_ptr<MyFastLIO::CallbackInfo> info)
     pub_path.publish(path);
 
     sensor_msgs::PointCloud2 map_msg;
-    if (info->map->size() > 0){
-        pcl::toROSMsg(*info->map, map_msg);
-        map_msg.header.frame_id = "map";
-        map_msg.header.stamp = ros::Time::now();
-        pub_map.publish(map_msg);
+    if (info->map != nullptr) {
+        if (info->map->size() > 0){
+            pcl::toROSMsg(*info->map, map_msg);
+            map_msg.header.frame_id = "map";
+            map_msg.header.stamp = ros::Time::now();
+            pub_map.publish(map_msg);
+        }
     }
-
     // std::cout << "update: " << "time: " << info->time << "\nq: " << info->pose.unit_quaternion().coeffs().transpose() << "\nt: " << info->pose.translation().transpose() << std::endl;
     // std::cout << "velocity: " << info->vel.transpose() << std::endl;
 }

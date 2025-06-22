@@ -1,16 +1,15 @@
 #include "my_fastlio/my_fastlio.hpp"
 #include "Eigen/src/Core/Matrix.h"
-#include "Eigen/src/Core/util/Memory.h"
 #include "Eigen/src/Geometry/Quaternion.h"
 #include "ieskf/ieskf.hpp"
+#include "manifold/manifold.hpp"
 #include "manifold/so3.hpp"
 #include "my_fastlio/my_fastlio_param.hpp"
-#include "pcl/common/io.h"
 #include "pcl/common/transforms.h"
 #include "pcl/impl/point_types.hpp"
-#include "pcl_conversions/pcl_conversions.h"
+#include "pcl/make_shared.h"
+#include <cstdlib>
 #include <functional>
-#include <iomanip>
 #include <memory>
 #include <mutex>
 #include <sophus/se3.hpp>
@@ -22,6 +21,7 @@
 #include <omp.h>
 #include <vector>
 #include "utils/slam_utils.hpp"
+#include "voxel_map/voxel_map_util.hpp"
 
 
 namespace my_fastlio
@@ -159,9 +159,11 @@ void MyFastLIO::handlePack()
         imuPropagate(last_imu, curr_imu);
         imu_odo.push_back(std::make_pair(curr_imu.time, Sophus::SE3d(getM(kf.normal_state, R), getM(kf.normal_state, p))));
     }
-    std::cout << "imu propagate cost: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl; 
+    std::cout << "[forward] imu propagate cost: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl; 
 
     lidarCompensation(meas, imu_odo);
+
+    buildmapAndUpdate(meas);
 
     last_meas_ = meas;
 }
@@ -225,7 +227,7 @@ void MyFastLIO::lidarCompensation(std::shared_ptr<MeasurePack> meas, const std::
 
     auto t2 = std::chrono::high_resolution_clock::now();
     auto add_duration = std::chrono::duration_cast<std::chrono::microseconds>(t2-t1).count();      
-    std::cout << "undistort " << count << " points(" << float(add_duration)/1e3 <<" ms): " << double(count) / double(cloud->points.size()) * 100 << "% avarage change: " << ava_change.transpose() / double(count) << std::endl;
+    std::cout << "[backward] undistort " << count << " points(" << float(add_duration)/1e3 <<" ms): " << double(count) / double(cloud->points.size()) * 100 << "% avarage change: " << ava_change.transpose() / double(count) << std::endl;
     // #ifdef _OPENMP
     // std::cout << "OpenMP enabled with " << omp_get_max_threads() << " threads\n";
     // #else
@@ -239,18 +241,18 @@ void MyFastLIO::computeFxAndFw(IESKF::ErrorPropagateFx& fx, IESKF::ErrorPropagat
     fx.setIdentity();
     fw.setZero();
     fx.block<3,3>(IDX_p * 3, IDX_v * 3) = dt * M3T::Identity();
-    fx.block<3,3>(IDX_R * 3, IDX_bw * 3) = -dt * Sophus::SO3d::leftJacobianInverse(dt * (getM(u, w) - getM(X, bw)));
-    fx.block<3,3>(IDX_R * 3, IDX_R * 3) = Sophus::SO3d::exp(-dt * (getM(u, w) - getM(X, bw))).matrix();
-    fx.block<3,3>(IDX_v * 3, IDX_R * 3) = -dt * getM(X, R).matrix() * Sophus::SO3d::hat(getM(u, a) - getM(X, ba));
+    fx.block<3,3>(IDX_R * 3, IDX_bw * 3) = -dt * SO3Jr(dt * (getM(u, w) - getM(X, bw)));
+    fx.block<3,3>(IDX_R * 3, IDX_R * 3) = SO3Exp(-dt * (getM(u, w) - getM(X, bw))).matrix();
+    fx.block<3,3>(IDX_v * 3, IDX_R * 3) = -dt * getM(X, R).matrix() * SO3Hat(getM(u, a) - getM(X, ba));
     fx.block<3,3>(IDX_v * 3, IDX_ba * 3) =  -dt * getM(X, R).matrix();
     // fx.block<3,2>(IDX_v * 3, IDX_g * 3) = Eigen::Matrix<double, 3, 2>::Zero();
     Eigen::Matrix<double,2,1> delta_g = delta_x.segment<2>(IDX_g * 3);
     fx.block<3,2>(IDX_v * 3, IDX_g * 3) = dt * std::get<7>(X.data).boxplusJacobian(delta_g);
 
-    fw.block<3,3>(IDX_R * 3, IDX_nw * 3) = -dt * Sophus::SO3d::leftJacobianInverse(dt * (getM(u, w) - getM(X, bw)));
+    fw.block<3,3>(IDX_R * 3, IDX_nw * 3) = -dt * SO3Jr(dt * (getM(u, w) - getM(X, bw)));
     fw.block<3,3>(IDX_v * 3, IDX_na * 3) = -dt * getM(X, R).matrix();
-    fw.block<3,3>(IDX_bw * 3, IDX_nbw * 3) = -dt * M3T::Identity();
-    fw.block<3,3>(IDX_ba * 3, IDX_nba * 3) = -dt * M3T::Identity();
+    fw.block<3,3>(IDX_bw * 3, IDX_nbw * 3) = dt * M3T::Identity();
+    fw.block<3,3>(IDX_ba * 3, IDX_nba * 3) = dt * M3T::Identity();
 }
 
 
@@ -372,40 +374,113 @@ bool MyFastLIO::esti_plane(V4T &pca_result, const KDTree::PointVector &point, co
     }
     return true;
 }
-void MyFastLIO::buildmapAndUpdate()
+
+
+
+
+inline void MyFastLIO::transformVoxelPoint(const PointVMap& in, PointVMap& out, const M3T& R, const V3T& t, const M3T& cov_R, const M3T& cov_p)
 {
-    CloudPtr new_cloud(new CloudT);
-    Sophus::SE3d T_L0toLi(getM(kf.normal_state, R), getM(kf.normal_state, p));
-    pcl::transformPointCloud(*last_meas_->cloud->cloud, *new_cloud, T_L0toLi.matrix().cast<float>());
-    if (map->empty()){
-        *map += *new_cloud;
-        ikd_tree.Build(map->points);
+    M3T R_hat_p = R * SO3Hat(in.point);
+    out.point = R * in.point + t;
+    out.cov = R * in.cov * R.transpose() + R_hat_p * cov_R * R_hat_p.transpose() + cov_p;
+}
+
+void MyFastLIO::transformVoxelCloud(CloudVmapPtr in, CloudVmapPtr& out, const M3T& R, const V3T& t, const M3T& cov_R, const M3T& cov_p)
+{
+    if (in == nullptr){
+        throw std::runtime_error("Input cloudptr is nullptr!");
+    }
+    if (out == nullptr){
+        out = pcl::make_shared<CloudVMap>();
+    }
+
+    out->resize(in->size());
+    omp_set_num_threads(8);
+    #pragma omp parallel
+    {
+        #pragma omp for nowait
+        for (int i = 0; i < in->size(); i++)
+        {
+            PointVMap& p = in->at(i);
+            PointVMap& vp = out->at(i);
+            transformVoxelPoint(p, vp, R, t, cov_R, cov_p);
+        }
+    }
+}
+
+void MyFastLIO::transformPCLCloud2GlobalVMap(CloudPtr cloud, CloudVmapPtr& global_cloud)
+{
+    if (global_cloud == nullptr){
+        global_cloud = pcl::make_shared<CloudVMap>();
+    }
+    CloudVmapPtr local_cloud(new CloudVMap), local_cloud2(new CloudVMap);
+    Sophus::SE3d T_WtoIi(getM(kf.normal_state, R), getM(kf.normal_state, p));
+    pclCloud2VoxelMapCloud(cloud, local_cloud, (T_WtoIi * T_ItoL_).matrix());
+    M3T cov_R = kf.error_cov.block<3,3>(IDX_R_ItoL * 3, IDX_R_ItoL * 3);
+    M3T cov_p = kf.error_cov.block<3,3>(IDX_p_ItoL * 3, IDX_p_ItoL * 3);
+
+    transformVoxelCloud(local_cloud, local_cloud2, T_ItoL_.rotationMatrix(), T_ItoL_.translation(), cov_R, cov_p);
+    cov_R = kf.error_cov.block<3,3>(IDX_R * 3, IDX_R * 3);
+    cov_p = kf.error_cov.block<3,3>(IDX_p * 3, IDX_p * 3);
+    transformVoxelCloud(local_cloud2, global_cloud, T_WtoIi.rotationMatrix(), T_WtoIi.translation(), cov_R, cov_p);
+}
+
+void MyFastLIO::buildmapAndUpdate(std::shared_ptr<MeasurePack> meas)
+{
+    auto start = slam_utils::TimerHelper::start();
+    if (vmap.empty()){
+        CloudVmapPtr global_cloud;
+        transformPCLCloud2GlobalVMap(meas->cloud->cloud, global_cloud);
+        std::cout << "cloud to global vmap cost: " << slam_utils::TimerHelper::end(start) << std::endl;
+        buildVoxelMap(*global_cloud, max_voxel_size, max_layer, layer_size,
+                      max_point_size, max_cov_point_size, plane_threshold,
+                      vmap);
     }else{
         auto start = slam_utils::TimerHelper::start();
         CloudXYZPtr filtered_cloud(new CloudXYZ);
         pcl::RandomSample<PointXYZ> sample;
         CloudXYZPtr xyz_cloud(new CloudXYZ);
-        pcl::copyPointCloud(*new_cloud, *xyz_cloud);
+        pcl::copyPointCloud(*meas->cloud->cloud, *xyz_cloud);
         sample.setSample(frame_residual_count);
         sample.setInputCloud(xyz_cloud);
         sample.filter(*filtered_cloud);
-        // std::cout << "sample:" << filtered_cloud->size() << ", cost: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl;
 
-        for (auto p : *filtered_cloud)
-        {
-            PointT center; 
-            pcl::copyPoint(p, center);
-            KDTree::PointVector point_lst;
-            std::vector<float> dists;
-            ikd_tree.Nearest_Search(center, plane_N_search, point_lst, dists);
+        std::cout << "[update] filter num: " << filtered_cloud->size() << ", cost: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl;
+
+        float time_scan;
+        float match_num;
+
+        kf.update();
+        // for (int i = 0; i < NUM_MAX_ITERATIONS; i++)
+        // {
+        //     auto start = slam_utils::TimerHelper::start();
+        //     CloudVmapPtr local_cloud;
+        //     Sophus::SE3d T_WtoIi(getM(kf.normal_state, R), getM(kf.normal_state, p));
+        //     pclCloud2VoxelMapCloud(filtered_cloud, local_cloud, (T_WtoIi * T_ItoL_).matrix());
+
+        //     const StateType& X = kf.normal_state;
+        //     std::vector<voxelmap::ptpl> ptpl;
+        //     std::vector<Eigen::Vector3d> non_match;
+        //     voxelmap::BuildResidualListOMP(vmap, max_voxel_size, 3, max_layer, *local_cloud, ptpl, non_match);
             
-            V4T plane_coeffs;
-            if (esti_plane(plane_coeffs, point_lst, 0.1)){
+        //     time_scan += slam_utils::TimerHelper::end(start) / float(NUM_MAX_ITERATIONS);
+        //     match_num += float(ptpl.size()) / float(NUM_MAX_ITERATIONS);
 
-            }
-        }
-        // *map += *new_cloud;
-        // ikd_tree.Add_Points(new_cloud->points, false);
+        //     IESKF::ObserveMatrix Hk;
+        //     IESKF::ErrorPropagateFx Jk;
+        //     IESKF::ObserveCovarianceType R;
+
+        //     // buildHkAndRk();
+        //     // IESKF::ErrorPropagateFx a;
+        //     // kf.normal_state.jacobianDelta_AplusDeltaminusX(kf.normal_state, a);
+
+        //     if (i == 0){
+        //         Jk.setIdentity();
+        //     }
+            
+        //     // kf.update()
+        // }
+        std::cout << "[update] avarage scan matched num: " << match_num << ", cost: " << time_scan << " ms" << std::endl;
     }
 
 }
@@ -416,13 +491,11 @@ void MyFastLIO::lioThread()
     while (true)
     {
         handlePack();
-        buildmapAndUpdate();
         if (updateCallback){
             std::shared_ptr<CallbackInfo> ret_info(new CallbackInfo);
             ret_info->time = last_meas_->cloud->time;
             ret_info->pose = Sophus::SE3d(getM(kf.normal_state, R), getM(kf.normal_state, p));
             ret_info->vel = getM(kf.normal_state, v);
-            ret_info->map = map;
             updateCallback.value()(ret_info);
         }
         // std::unique_lock<std::mutex> lock_lidar(lidar_data_mutex_);

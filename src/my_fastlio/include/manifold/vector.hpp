@@ -31,6 +31,21 @@ public:
         *this = Vector(*this + delta);
     }
 
+    Tangent boxminus_impl(const Vector<N>& other) const 
+    {
+        return *this - other;
+    }
+
+    void jacobianDelta_AplusDeltaminusX(const Vector& A, Eigen::Ref<Eigen::Matrix<double, N, N>> jac)
+    {
+        jac.setIdentity();
+    }
+
+    void invJacobianDelta_AplusDeltaminusX(const Vector& A, Eigen::Ref<Eigen::Matrix<double, N, N>> jac)
+    {
+        jac.setIdentity();
+    }
+
 };
 
 

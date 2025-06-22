@@ -1,19 +1,18 @@
 #pragma once
 #include <Eigen/Dense>
 #include <memory>
+#include <pcl/make_shared.h>
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
+#include <vector>
 #include "ikd_Tree.h"
+#include "pcl/pcl_macros.h"
+#include "voxel_map/voxel_map_util.hpp"
+#include "common_define.hpp"
 
 namespace my_fastlio
 {
     
-using V3T = Eigen::Vector3d;
-using V4T = Eigen::Vector4d;
-using QuaT = Eigen::Quaterniond;
-using M3T = Eigen::Matrix3d;
-using M2T = Eigen::Matrix2d;
-using M4T = Eigen::Matrix4d;
 using PointXYZ = pcl::PointXYZ;
 using PointXYZI = pcl::PointXYZ;
 using PointXYZRGB = pcl::PointXYZRGB;
@@ -34,9 +33,13 @@ using CloudConstPtr = pcl::PointCloud<PointT>::ConstPtr;
 
 using PointIKDT = ikdTree_PointType;
 
+using PointVMap = voxelmap::pointWithCov;
+using CloudVMap = std::vector<PointVMap>;
+using CloudVmapPtr = pcl::shared_ptr<CloudVMap>;
 
 struct ImuData
 {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     double time;
     V3T w; // angular velocity
     V3T a; // linear acceleration

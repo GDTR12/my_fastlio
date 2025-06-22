@@ -33,6 +33,24 @@ public:
         *this = SO3((*this) * Base::exp(delta));
     }
 
+    Eigen::Matrix<double, 3, 1> boxminus_impl(const SO3& other) const 
+    {
+        SO3 RTR = other.inverse() * (*this);
+        return RTR.log();
+    }
+
+    void jacobianDelta_AplusDeltaminusX(const SO3& A, Eigen::Ref<Eigen::Matrix<double, DOF, DOF>> jac)
+    {
+        auto Tmp = (*this).inverse() * A;
+        jac = SO3Jr(Tmp.log()).inverse();
+    }
+
+    void invJacobianDelta_AplusDeltaminusX(const SO3& A, Eigen::Ref<Eigen::Matrix<double, DOF, DOF>> jac)
+    {
+        auto Tmp = (*this).inverse() * A;
+        jac = SO3Jr(Tmp.log());
+    }
+
     static SO3 Identity(){return Base();}
 
 };
