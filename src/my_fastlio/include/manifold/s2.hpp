@@ -3,8 +3,10 @@
 
 #include <Eigen/Core>
 #include <sophus/so3.hpp>
+#include "Eigen/src/Core/Matrix.h"
 #include "Eigen/src/Geometry/Quaternion.h"
 #include "manifold.hpp"
+#include "iostream"
 
 namespace manifold {
 
@@ -51,20 +53,22 @@ public:
 
     void boxplus_impl(const Tangent& tangent)
     {
-        auto Bx = computeBx();
+        auto Bx = computeBx(*this);
         *this = SO3Exp(Bx * tangent) * (*this);
     }
 
     // Y:this X:other y \minus x 
     Eigen::Matrix<double, 2, 1> boxminus_impl(const S2& other) const
     {
+        Eigen::Vector3d Y = *this;
+        Eigen::Vector3d X = other;
+        Eigen::Matrix<double, 2, 3> BxT = computeBx(X).transpose();
+        auto theta = Eigen::Quaterniond::FromTwoVectors(X, Y);
 
-        const S2& Y = *this;
-        const S2& X = other;
-        auto BxT = computeBx().transpose();
-        auto xhaty = SO3Hat(X) * Y;
-        auto theta = Eigen::Quaterniond::FromTwoVectors(Y, X);
-        return BxT * theta.angularDistance(Eigen::Quaterniond::Identity()) * xhaty / xhaty.norm();
+        // std::cout << theta.coeffs().transpose() << std::endl;
+        auto Bxu = Sophus::SO3d(theta).log();
+        // std::cout << Bxu << std::endl;
+        return Eigen::Vector2d(BxT.row(0) * Bxu, BxT.row(1) * Bxu);
     }
 
 
@@ -86,7 +90,7 @@ public:
 
     Eigen::Matrix<double, 3, 2> boxplusJacobian(const Tangent& u) const
     {
-        Eigen::Matrix<double, 3, 2> Bx = computeBx();
+        Eigen::Matrix<double, 3, 2> Bx = computeBx((*this));
         Eigen::Matrix<double, 3, 1> Bu = Bx * u;
         return -SO3Exp(Bu).matrix() * SO3Hat(*this) * SO3Jr(Bu) * Bx;
     }
@@ -96,54 +100,63 @@ public:
 
 private:
 
-    Eigen::Matrix<double, 3, 2> computeBx() const
+    Eigen::Matrix<double, 3, 2> computeBx(const Eigen::Vector3d x) const
     {
         Eigen::Matrix<double, 3, 2> res;
-        auto vec = this->data();
-        if (S2_Type == CLOSE_Y){
-            if (vec[1] + len > tolerance){
-                res << len - vec[0]*vec[0]/(len+vec[1]), -vec[0]*vec[2]/(len+vec[1]),
-                        -vec[0], -vec[2],
-                        -vec[0]*vec[2]/(len+vec[1]), len-vec[2]*vec[2]/(len+vec[1]);
-                res /= len;
-            }else {
-                res = Eigen::Matrix<double, 3, 2>::Zero();
-                res(1, 1) = -1;
-                res(2, 0) = 1;
-            }
-        }else if (S2_Type == CLOSE_Z){
-            res = Eigen::Matrix<double, 3,2>::Zero();
-
-
-			// if(std::abs(std::abs(vec[2]) - len) > tolerance)
-			// {
-				
-			// 	res << len - vec[0]*vec[0]/(len+vec[2]), -vec[0]*vec[1]/(len+vec[2]),
-			// 			-vec[0]*vec[1]/(len+vec[2]), len-vec[1]*vec[1]/(len+vec[2]),
-			// 			-vec[0], -vec[1];
-			// 	res /= len;
-			// }else{
-			// 	res = Eigen::Matrix<double, 3, 2>::Zero();
-				res(0, 0) = 1;
-				res(1, 1) = 1;
-			// }
-        }else{
-            if(vec[0] + len > tolerance)
-            {
-                
-                res << -vec[1], -vec[2],
-                            len - vec[1]*vec[1]/(len+vec[0]), -vec[2]*vec[1]/(len+vec[0]),
-                            -vec[2]*vec[1]/(len+vec[0]), len-vec[2]*vec[2]/(len+vec[0]);
-                res /= len;
-            }
-            else
-            {
-                res = Eigen::Matrix<double, 3, 2>::Zero();
-                res(1, 1) = -1;
-                res(2, 0) = 1;
-            }
+        Eigen::Vector3d tmp(0,0,1);
+        if (x.dot(tmp) < 1e-2){
+            tmp = Eigen::Vector3d(1, 0 ,0);
         }
+        Eigen::Vector3d tmp1 = (tmp - x * (x.transpose() * tmp)).normalized();
+        res.leftCols(1) = tmp1;
+        res.rightCols(1) = x.cross(tmp1).normalized();
+        // std::cout << "bx" << res << std::endl;
         return res;
+        // auto vec = this->data();
+        // if (S2_Type == CLOSE_Y){
+        //     if (vec[1] + len > tolerance){
+        //         res << len - vec[0]*vec[0]/(len+vec[1]), -vec[0]*vec[2]/(len+vec[1]),
+        //                 -vec[0], -vec[2],
+        //                 -vec[0]*vec[2]/(len+vec[1]), len-vec[2]*vec[2]/(len+vec[1]);
+        //         res /= len;
+        //     }else {
+        //         res = Eigen::Matrix<double, 3, 2>::Zero();
+        //         res(1, 1) = -1;
+        //         res(2, 0) = 1;
+        //     }
+        // }else if (S2_Type == CLOSE_Z){
+        //     res = Eigen::Matrix<double, 3,2>::Zero();
+
+
+		// 	// if(std::abs(std::abs(vec[2]) - len) > tolerance)
+		// 	// {
+				
+		// 	// 	res << len - vec[0]*vec[0]/(len+vec[2]), -vec[0]*vec[1]/(len+vec[2]),
+		// 	// 			-vec[0]*vec[1]/(len+vec[2]), len-vec[1]*vec[1]/(len+vec[2]),
+		// 	// 			-vec[0], -vec[1];
+		// 	// 	res /= len;
+		// 	// }else{
+		// 	// 	res = Eigen::Matrix<double, 3, 2>::Zero();
+		// 		res(0, 0) = 1;
+		// 		res(1, 1) = 1;
+		// 	// }
+        // }else{
+        //     if(vec[0] + len > tolerance)
+        //     {
+                
+        //         res << -vec[1], -vec[2],
+        //                     len - vec[1]*vec[1]/(len+vec[0]), -vec[2]*vec[1]/(len+vec[0]),
+        //                     -vec[2]*vec[1]/(len+vec[0]), len-vec[2]*vec[2]/(len+vec[0]);
+        //         res /= len;
+        //     }
+        //     else
+        //     {
+        //         res = Eigen::Matrix<double, 3, 2>::Zero();
+        //         res(1, 1) = -1;
+        //         res(2, 0) = 1;
+        //     }
+        // }
+        // return res;
     }
 };
 

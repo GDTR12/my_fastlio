@@ -56,6 +56,7 @@ typedef struct ptpl {
   Eigen::Vector3d normal;
   Eigen::Vector3d center;
   Eigen::Matrix<double, 6, 6> plane_cov;
+  Eigen::Matrix<double, 3, 3> point_cov;
   double d;
   int layer;
 } ptpl;
@@ -64,7 +65,7 @@ typedef struct ptpl {
 struct pointWithCov {
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   Eigen::Vector3d point;
-  Eigen::Vector3d point_world;
+  // Eigen::Vector3d point_world;
   Eigen::Matrix3d cov;
 };
 
@@ -521,7 +522,7 @@ void transformLidar(const StatesGroup &state,
                     pcl::PointCloud<pcl::PointXYZI>::Ptr &trans_cloud);
 
 
-void build_single_residual(const pointWithCov &pv, const OctoTree *current_octo,
+void build_single_residual(const pointWithCov &pv, const Eigen::Vector3d& point_world, const OctoTree *current_octo,
                            const int current_layer, const int max_layer,
                            const double sigma_num, bool &is_sucess,
                            double &prob, ptpl &single_ptpl);
@@ -537,6 +538,7 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
                           const double voxel_size, const double sigma_num,
                           const int max_layer,
                           const std::vector<pointWithCov> &pv_list,
+                          const std::vector<Eigen::Vector3d> &pv_world_list,
                           std::vector<ptpl> &ptpl_list,
                           std::vector<Eigen::Vector3d> &non_match);
 
@@ -545,7 +547,7 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
 void BuildResidualListNormal(
     const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
     const double voxel_size, const double sigma_num, const int max_layer,
-    const std::vector<pointWithCov> &pv_list, std::vector<ptpl> &ptpl_list,
+    const std::vector<pointWithCov> &pv_list, const std::vector<Eigen::Vector3d>& pv_world_lst , std::vector<ptpl> &ptpl_list,
     std::vector<Eigen::Vector3d> &non_match);
 
 

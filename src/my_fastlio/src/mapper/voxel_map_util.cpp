@@ -1,5 +1,7 @@
 #include "voxel_map/voxel_map_util.hpp"
+#include "Eigen/src/Core/Matrix.h"
 #include <iostream>
+#include <vector>
 
 namespace voxelmap {
 
@@ -142,12 +144,13 @@ void transformLidar(const StatesGroup &state,
   }
 }
 
-void build_single_residual(const pointWithCov &pv, const OctoTree *current_octo,
+void build_single_residual(const pointWithCov &pv, const Eigen::Vector3d& point_world, const OctoTree *current_octo,
                            const int current_layer, const int max_layer,
                            const double sigma_num, bool &is_sucess,
                            double &prob, ptpl &single_ptpl) {
   double radius_k = 3;
-  Eigen::Vector3d p_w = pv.point_world;
+  // Eigen::Vector3d p_w = pv.point_world;
+  Eigen::Vector3d p_w = point_world;
   if (current_octo->plane_ptr_->is_plane) {
     Plane &plane = *current_octo->plane_ptr_;
     Eigen::Vector3d p_world_to_center = p_w - plane.center;
@@ -180,6 +183,7 @@ void build_single_residual(const pointWithCov &pv, const OctoTree *current_octo,
           single_ptpl.center = plane.center;
           single_ptpl.d = plane.d;
           single_ptpl.layer = current_layer;
+          single_ptpl.point_cov = pv.cov;
         }
         return;
       } else {
@@ -196,7 +200,7 @@ void build_single_residual(const pointWithCov &pv, const OctoTree *current_octo,
         if (current_octo->leaves_[leafnum] != nullptr) {
 
           OctoTree *leaf_octo = current_octo->leaves_[leafnum];
-          build_single_residual(pv, leaf_octo, current_layer + 1, max_layer,
+          build_single_residual(pv, point_world, leaf_octo, current_layer + 1, max_layer,
                                 sigma_num, is_sucess, prob, single_ptpl);
         }
       }
@@ -319,6 +323,7 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
                           const double voxel_size, const double sigma_num,
                           const int max_layer,
                           const std::vector<pointWithCov> &pv_list,
+                          const std::vector<Eigen::Vector3d> &pv_world_list,
                           std::vector<ptpl> &ptpl_list,
                           std::vector<Eigen::Vector3d> &non_match) {
   std::mutex mylock;
@@ -336,9 +341,10 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
 #endif
   for (int i = 0; i < index.size(); i++) {
     pointWithCov pv = pv_list[i];
+    const Eigen::Vector3d& pv_world = pv_world_list[i];
     float loc_xyz[3];
     for (int j = 0; j < 3; j++) {
-      loc_xyz[j] = pv.point_world[j] / voxel_size;
+      loc_xyz[j] = pv_world[j] / voxel_size;
       if (loc_xyz[j] < 0) {
         loc_xyz[j] -= 1.0;
       }
@@ -351,7 +357,7 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
       ptpl single_ptpl;
       bool is_sucess = false;
       double prob = 0;
-      build_single_residual(pv, current_octo, 0, max_layer, sigma_num,
+      build_single_residual(pv, pv_world,current_octo, 0, max_layer, sigma_num,
                             is_sucess, prob, single_ptpl);
       if (!is_sucess) {
         VOXEL_LOC near_position = position;
@@ -378,7 +384,7 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
         }
         auto iter_near = voxel_map.find(near_position);
         if (iter_near != voxel_map.end()) {
-          build_single_residual(pv, iter_near->second, 0, max_layer, sigma_num,
+          build_single_residual(pv, pv_world, iter_near->second, 0, max_layer, sigma_num,
                                 is_sucess, prob, single_ptpl);
         }
       }
@@ -405,15 +411,16 @@ void BuildResidualListOMP(const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
 void BuildResidualListNormal(
     const unordered_map<VOXEL_LOC, OctoTree *> &voxel_map,
     const double voxel_size, const double sigma_num, const int max_layer,
-    const std::vector<pointWithCov> &pv_list, std::vector<ptpl> &ptpl_list,
+    const std::vector<pointWithCov> &pv_list, const std::vector<Eigen::Vector3d>& pv_world_lst , std::vector<ptpl> &ptpl_list,
     std::vector<Eigen::Vector3d> &non_match) {
   ptpl_list.clear();
   std::vector<size_t> index(pv_list.size());
   for (size_t i = 0; i < pv_list.size(); ++i) {
     pointWithCov pv = pv_list[i];
+    const Eigen::Vector3d& pv_world = pv_world_lst[i];
     float loc_xyz[3];
     for (int j = 0; j < 3; j++) {
-      loc_xyz[j] = pv.point_world[j] / voxel_size;
+      loc_xyz[j] = pv_world[j] / voxel_size;
       if (loc_xyz[j] < 0) {
         loc_xyz[j] -= 1.0;
       }
@@ -426,7 +433,7 @@ void BuildResidualListNormal(
       ptpl single_ptpl;
       bool is_sucess = false;
       double prob = 0;
-      build_single_residual(pv, current_octo, 0, max_layer, sigma_num,
+      build_single_residual(pv, pv_world, current_octo, 0, max_layer, sigma_num,
                             is_sucess, prob, single_ptpl);
 
       if (!is_sucess) {
@@ -454,14 +461,14 @@ void BuildResidualListNormal(
         }
         auto iter_near = voxel_map.find(near_position);
         if (iter_near != voxel_map.end()) {
-          build_single_residual(pv, iter_near->second, 0, max_layer, sigma_num,
+          build_single_residual(pv, pv_world, iter_near->second, 0, max_layer, sigma_num,
                                 is_sucess, prob, single_ptpl);
         }
       }
       if (is_sucess) {
         ptpl_list.push_back(single_ptpl);
       } else {
-        non_match.push_back(pv.point_world);
+        non_match.push_back(pv_world);
       }
     }
   }

@@ -8,10 +8,20 @@
 #include <manifold/s2.hpp>
 #include <manifold/vector.hpp>
 #include <stdexcept>
+#include <chrono>
 #include <iostream>
 
 namespace ieskf{
 
+
+
+struct IESKFUpdateInfo{
+    int iter_times;
+    double cost_time;
+    double begin_cost;
+    double end_cost;
+    double avarave_iter_time;
+};
 
 // namespace mfd = manifold;
 // typedef mfd::Manifolds<mfd::SO3, mfd::Vector<3>, mfd::Vector<3>, mfd::Vector<3>, mfd::Vector<3>,
@@ -53,18 +63,26 @@ public:
         error_state.setZero();
     }
 
-    void update()
+    IESKFUpdateInfo update(int max_iter, double epsilon)
     {
         StateType& Xk = normal_state;
+        StateType last_Xk;
         StateType X0 = normal_state;
         ErrorStateType& deltaX = error_state;
         ErrorStateConvarianceType& Pk = error_cov;
 
-        std::cout << std::get<7>(Xk.data).transpose() << std::endl;
-        Xk.boxplus(deltaX.setOnes() * 0.01);
-        std::cout << std::get<7>(Xk.data).transpose() << std::endl;
-        for (int i = 0; i < NUM_MAX_ITERATIONS; i++)
+        // std::cout << std::get<7>(Xk.data).transpose() << std::endl;
+        // Xk.boxplus(deltaX.setOnes() * 0.01);
+        // std::cout << std::get<7>(Xk.data).transpose() << std::endl;
+        // std::cout << Pk << std::endl;
+        // exit(0);
+
+        IESKFUpdateInfo info;
+        int count = 0;
+        double total_time = 0;
+        for (int i = 0; i < max_iter; i++)
         {
+            auto t1 = std::chrono::high_resolution_clock::now();
             ObserveMatrix Hk; 
             ObserveResult zk;
             ObserveCovarianceType R;
@@ -76,16 +94,37 @@ public:
                 Pk = Jk_inv * Pk * Jk_inv.transpose();
             }
             
-            // if (nullptr == computeHxAndR){
-            //     throw std::runtime_error("Function computeHxAndR didn't initialized!");
-            // }
-            // computeHxAndR(zk, Hk, R, Xk, X0);
-            ErrorStateType error = Xk.boxminus(X0);
-            std::cout << error.transpose() << std::endl;
-            exit(0);
+            if (nullptr == computeHxAndR){
+                throw std::runtime_error("Function computeHxAndR didn't initialized!");
+            }
+            computeHxAndR(zk, Hk, R, Xk, X0);
+            if (i == 0){
+                info.begin_cost = zk.norm();
+            }
+            
+            auto K = (Hk.transpose() * R.inverse() * Hk + Pk.inverse()).inverse() * Hk.transpose() * R.inverse();
+            last_Xk = Xk;
+            Xk.boxplus(-K * zk - (Eigen::Matrix<double, DIM_ERROR_STATE, DIM_ERROR_STATE>::Identity() - K * Hk) * (Xk.boxminus(X0)));
 
+            auto t2 = std::chrono::high_resolution_clock::now();
+            auto duration = float(std::chrono::duration_cast<std::chrono::microseconds>(t2-t1).count()) / float(1e3);      
+            total_time += duration;
+            count++;
+
+            if (i > 0 && Xk.boxminus(last_Xk).norm() < epsilon || i == max_iter){
+                info.end_cost = zk.norm();
+                break;
+            }
         }
+
+        info.avarave_iter_time = total_time / count;
+        info.iter_times = count;
+        info.cost_time = total_time;
+
+        return info;
     }
+
+
 
     StateType normal_state;
     ErrorStateType error_state;
@@ -97,7 +136,6 @@ public:
     ErrorPropagateFx fx;
     ErrorPropagateFw fw;
 
-    int NUM_MAX_ITERATIONS = 8;
 };
 
 }

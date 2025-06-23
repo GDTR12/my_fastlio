@@ -14,6 +14,7 @@
 #include "my_fastlio/my_fastlio.hpp"
 #include "livox_ros_driver/CustomMsg.h"
 #include "manifold/manifold.hpp"
+#include "pcl/common/transforms.h"
 #include "ros/publisher.h"
 #include "ros/rate.h"
 #include "ros/time.h"
@@ -104,12 +105,16 @@ void lioUpdateCallback(std::shared_ptr<MyFastLIO::CallbackInfo> info)
     sensor_msgs::PointCloud2 map_msg;
     if (info->map != nullptr) {
         if (info->map->size() > 0){
-            pcl::toROSMsg(*info->map, map_msg);
+            CloudPtr filtered_pcd(new CloudT);
+            pcl::transformPointCloud(*info->map, *filtered_pcd, info->pose.matrix().cast<float>());
+            pcl::toROSMsg(*filtered_pcd, map_msg);
             map_msg.header.frame_id = "map";
             map_msg.header.stamp = ros::Time::now();
             pub_map.publish(map_msg);
         }
     }
+    if (info->filtered_indices != nullptr)
+        std::cout << "remain cloud size: " << info->filtered_indices->size() << std::endl;
     // std::cout << "update: " << "time: " << info->time << "\nq: " << info->pose.unit_quaternion().coeffs().transpose() << "\nt: " << info->pose.translation().transpose() << std::endl;
     // std::cout << "velocity: " << info->vel.transpose() << std::endl;
 }
