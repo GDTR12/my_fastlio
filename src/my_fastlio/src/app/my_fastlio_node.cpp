@@ -103,12 +103,14 @@ void lioUpdateCallback(std::shared_ptr<MyFastLIO::CallbackInfo> info)
     pub_path.publish(path);
 
     sensor_msgs::PointCloud2 map_msg;
+    static int id_cloud = 0;
     if (info->map != nullptr) {
         if (info->map->size() > 0){
             CloudPtr filtered_pcd(new CloudT);
             pcl::transformPointCloud(*info->map, *filtered_pcd, info->pose.matrix().cast<float>());
             pcl::toROSMsg(*filtered_pcd, map_msg);
             map_msg.header.frame_id = "map";
+            map_msg.header.seq = id_cloud++;
             map_msg.header.stamp = ros::Time::now();
             pub_map.publish(map_msg);
         }

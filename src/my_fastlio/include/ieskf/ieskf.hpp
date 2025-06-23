@@ -58,6 +58,7 @@ public:
         if (nullptr == computeFxAndFw){
             throw std::runtime_error("Function computeFxAndFw didn't initialized!");
         }
+        // std::cout << fx << std::endl;
         error_state = fx * error_state + fw * noise;
         error_cov = fx * error_cov * fx.transpose() + fw * noise_cov * fw.transpose();
         error_state.setZero();
@@ -82,10 +83,9 @@ public:
         double total_time = 0;
         for (int i = 0; i < max_iter; i++)
         {
-            auto t1 = std::chrono::high_resolution_clock::now();
             ObserveMatrix Hk; 
             ObserveResult zk;
-            ObserveCovarianceType R;
+            ObserveCovarianceType R_inv;
             typename StateType::JacAplusDminusX Jk_inv;
             if (i == 0){
                 Jk_inv.setIdentity();
@@ -94,17 +94,27 @@ public:
                 Pk = Jk_inv * Pk * Jk_inv.transpose();
             }
             
-            if (nullptr == computeHxAndR){
+            if (nullptr == computeHxAndRinv){
                 throw std::runtime_error("Function computeHxAndR didn't initialized!");
             }
-            computeHxAndR(zk, Hk, R, Xk, X0);
+            computeHxAndRinv(zk, Hk, R_inv, Xk, X0);
             if (i == 0){
                 info.begin_cost = zk.norm();
             }
             
-            auto K = (Hk.transpose() * R.inverse() * Hk + Pk.inverse()).inverse() * Hk.transpose() * R.inverse();
+            auto t1 = std::chrono::high_resolution_clock::now();
+            auto K = (Hk.transpose() * R_inv * Hk + Pk.inverse()).inverse() * Hk.transpose() * R_inv;
             last_Xk = Xk;
-            Xk.boxplus(-K * zk - (Eigen::Matrix<double, DIM_ERROR_STATE, DIM_ERROR_STATE>::Identity() - K * Hk) * (Xk.boxminus(X0)));
+
+            // std::cout << K << std::endl;
+            // std::cout << Jk_inv << std::endl;
+            // std::cout << Pk << std::endl;
+            // std::cout << Xk.boxminus(X0).transpose() << std::endl;
+            // std::cout << Jk_inv * (Xk.boxminus(X0)) << std::endl;
+            Eigen::Matrix<double, StateType::DOF, 1> delta = (-K * zk - (Eigen::Matrix<double, DIM_ERROR_STATE, DIM_ERROR_STATE>::Identity() - K * Hk) * Jk_inv * (Xk.boxminus(X0)));
+            delta.template tail<2>() = Eigen::Vector2d::Zero();
+            std::cout << delta.transpose() << std::endl;
+            Xk.boxplus(delta);
 
             auto t2 = std::chrono::high_resolution_clock::now();
             auto duration = float(std::chrono::duration_cast<std::chrono::microseconds>(t2-t1).count()) / float(1e3);      
@@ -132,7 +142,7 @@ public:
     ErrorStateConvarianceType error_cov;
     NoiseConvarianceType noise_cov;
     std::function<void(ErrorPropagateFx& fx, ErrorPropagateFw& fw, const StateType& X, const ErrorStateType& delta_x, const ControlType& u, const double dt)> computeFxAndFw;
-    std::function<void(ObserveResult& zk, ObserveMatrix& H, ObserveCovarianceType& R, const StateType& Xk,const StateType& X)> computeHxAndR;
+    std::function<void(ObserveResult& zk, ObserveMatrix& H, ObserveCovarianceType& R, const StateType& Xk,const StateType& X)> computeHxAndRinv;
     ErrorPropagateFx fx;
     ErrorPropagateFw fw;
 

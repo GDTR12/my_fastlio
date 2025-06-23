@@ -248,7 +248,7 @@ void MyFastLIO::computeFxAndFw(IESKF::ErrorPropagateFx& fx, IESKF::ErrorPropagat
     fx.block<3,3>(IDX_v * 3, IDX_ba * 3) =  -dt * getM(X, R).matrix();
     // fx.block<3,2>(IDX_v * 3, IDX_g * 3) = Eigen::Matrix<double, 3, 2>::Zero();
     Eigen::Matrix<double,2,1> delta_g = delta_x.segment<2>(IDX_g * 3);
-    fx.block<3,2>(IDX_v * 3, IDX_g * 3) = dt * std::get<7>(X.data).boxplusJacobian(delta_g);
+    fx.block<3,2>(IDX_v * 3, IDX_g * 3) = dt * std::get<7>(X.data).boxplusJacobian(Eigen::Vector2d::Zero());
 
     fw.block<3,3>(IDX_R * 3, IDX_nw * 3) = -dt * SO3Jr(dt * (getM(u, w) - getM(X, bw)));
     fw.block<3,3>(IDX_v * 3, IDX_na * 3) = -dt * getM(X, R).matrix();
@@ -411,7 +411,7 @@ void MyFastLIO::transformVoxelCloud(CloudVmapPtr in, CloudVmapPtr& out, const M3
 
 
 
-void MyFastLIO::computeHxAndR(CloudXYZPtr filtered_cloud, IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& Rk, const StateType& Xk,const StateType& X)
+void MyFastLIO::computeHxAndR(CloudXYZPtr filtered_cloud, IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& Rk_inv, const StateType& Xk,const StateType& X)
 {
     auto start = slam_utils::TimerHelper::start();
     CloudVmapPtr local_cloud;
@@ -432,8 +432,8 @@ void MyFastLIO::computeHxAndR(CloudXYZPtr filtered_cloud, IESKF::ObserveResult& 
     start = slam_utils::TimerHelper::start();
     H.resize(ptpl.size(), StateType::DOF);
     H.setZero();
-    Rk.resize(ptpl.size(), ptpl.size());
-    Rk.setZero();
+    Rk_inv.resize(ptpl.size(), ptpl.size());
+    Rk_inv.setZero();
     zk.resize(ptpl.size(), 1);
 
     omp_set_num_threads(4);
@@ -465,8 +465,9 @@ void MyFastLIO::computeHxAndR(CloudXYZPtr filtered_cloud, IESKF::ObserveResult& 
             Huq.block<1,3>(0, 3) = uT;
             Eigen::Matrix<double, 1, 3> Hp = uTR * R_ItoL;
 
-            Rk(i,i) = Huq * ptpl[i].plane_cov * Huq.transpose();
-            Rk(i, i) += Hp * ptpl[i].point_cov * Hp.transpose();
+            Rk_inv(i,i) = Huq * ptpl[i].plane_cov * Huq.transpose();
+            Rk_inv(i, i) += Hp * ptpl[i].point_cov * Hp.transpose();
+            Rk_inv(i, i) = 1 / Rk_inv(i, i);
 
             zk(i, 0) = uT * vec;
         }
@@ -474,7 +475,7 @@ void MyFastLIO::computeHxAndR(CloudXYZPtr filtered_cloud, IESKF::ObserveResult& 
     }
     std::cout << "[update] measure " << ptpl.size() << " points (res " << zk.norm() << "), cost: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl;
     // std::cout << zk.transpose() << std::endl;
-    // std::cout << Rk.diagonal().transpose() << std::endl;
+    // std::cout << Rk_inv.diagonal().transpose() << std::endl;
 }
 
 
@@ -506,8 +507,8 @@ void MyFastLIO::buildmapAndUpdate(std::shared_ptr<MeasurePack> meas)
         std::cout << "[update] filter num: " << filtered_cloud->size() << ", cost: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl;
         
 
-        kf.computeHxAndR = [this, filtered_cloud](IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& R, const StateType& Xk,const StateType& X){
-            this->computeHxAndR(filtered_cloud, zk, H, R, Xk, X);
+        kf.computeHxAndRinv = [this, filtered_cloud](IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& Rinv, const StateType& Xk,const StateType& X){
+            this->computeHxAndR(filtered_cloud, zk, H, Rinv, Xk, X);
         };
         IESKFUpdateInfo info = kf.update(NUM_MAX_ITERATIONS, 1e-4);
         std::cout << "[update] iteration time: " << info.cost_time << " ms" << std::endl;
@@ -518,7 +519,7 @@ void MyFastLIO::buildmapAndUpdate(std::shared_ptr<MeasurePack> meas)
         voxelmap::updateVoxelMap(*cloud_global, max_voxel_size, 
                 max_layer, layer_size, max_point_size, 
                 max_cov_point_size, plane_threshold, vmap);
-        std::cout << "[update] voxmap update cost: " << slam_utils::TimerHelper::end(start_vmap_update) << std::endl;
+        std::cout << "[update] voxmap update cost: " << slam_utils::TimerHelper::end(start_vmap_update) << " ms" << std::endl;
         
         std::cout << "[update] total time: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl;
     }
