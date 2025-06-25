@@ -46,8 +46,8 @@ public:
 
     IESKF()
     {
-        error_cov.setIdentity();
-        noise_cov.setIdentity();
+        error_cov = 1e-5 * ErrorStateConvarianceType::Identity();
+        noise_cov = 1e-5 * NoiseConvarianceType::Identity();
         error_state.setZero();
     }
 
@@ -60,30 +60,34 @@ public:
         }
         // std::cout << fx << std::endl;
         error_state = fx * error_state + fw * noise;
+        // std::cout << "fx: \n" << fx << "\n" << std::endl;
         error_cov = fx * error_cov * fx.transpose() + fw * noise_cov * fw.transpose();
-        error_state.setZero();
+        // error_state.setZero();
     }
 
     IESKFUpdateInfo update(int max_iter, double epsilon)
     {
-        StateType& Xk = normal_state;
+        StateType Xk = normal_state;
         StateType last_Xk;
         StateType X0 = normal_state;
         ErrorStateType& deltaX = error_state;
-        ErrorStateConvarianceType& Pk = error_cov;
-
+        ErrorStateConvarianceType Pk = error_cov;
+        Eigen::Matrix<double, StateType::DOF, Eigen::Dynamic> K;
+        ObserveMatrix Hk; 
         // std::cout << std::get<7>(Xk.data).transpose() << std::endl;
         // Xk.boxplus(deltaX.setOnes() * 0.01);
         // std::cout << std::get<7>(Xk.data).transpose() << std::endl;
         // std::cout << Pk << std::endl;
         // exit(0);
 
+        // std::cout << "es: \n" << error_state.transpose() << std::endl;
+        // std::cout << "es cov: \n" << error_cov << std::endl;
+        // exit(0);
         IESKFUpdateInfo info;
         int count = 0;
         double total_time = 0;
         for (int i = 0; i < max_iter; i++)
         {
-            ObserveMatrix Hk; 
             ObserveResult zk;
             ObserveCovarianceType R_inv;
             typename StateType::JacAplusDminusX Jk_inv;
@@ -91,7 +95,8 @@ public:
                 Jk_inv.setIdentity();
             }else{
                 X0.invJacobianDelta_AplusDeltaminusX(Xk, Jk_inv);
-                Pk = Jk_inv * Pk * Jk_inv.transpose();
+                // std::cout << Jk_inv << std::endl;
+                Pk = Jk_inv * error_cov * Jk_inv.transpose();
             }
             
             if (nullptr == computeHxAndRinv){
@@ -103,7 +108,15 @@ public:
             }
             
             auto t1 = std::chrono::high_resolution_clock::now();
-            auto K = (Hk.transpose() * R_inv * Hk + Pk.inverse()).inverse() * Hk.transpose() * R_inv;
+            // std::cout << "Pk inv: \n" << Pk << std::endl << std::endl;
+            K.resize(StateType::DOF, Hk.rows());
+            K.setZero();
+            K = (Hk.transpose() * R_inv * Hk + Pk.inverse()).ldlt().solve(Hk.transpose() * R_inv);
+            // K = (Hk.transpose() * Hk + (Pk / 0.001).inverse()).ldlt().solve(Hk.transpose());
+            // K = (Hk.transpose() * R_inv * Hk + Pk.inverse()).inverse() * Hk.transpose() * R_inv;
+            // K = (Hk.transpose() * R_inv * Hk + Pk.inverse()).inverse();
+            // std::cout << K.leftCols(2) << std::endl;
+            // std::cout << "K: " << K << std::endl << std::endl;
             last_Xk = Xk;
 
             // std::cout << K << std::endl;
@@ -112,8 +125,11 @@ public:
             // std::cout << Xk.boxminus(X0).transpose() << std::endl;
             // std::cout << Jk_inv * (Xk.boxminus(X0)) << std::endl;
             Eigen::Matrix<double, StateType::DOF, 1> delta = (-K * zk - (Eigen::Matrix<double, DIM_ERROR_STATE, DIM_ERROR_STATE>::Identity() - K * Hk) * Jk_inv * (Xk.boxminus(X0)));
-            delta.template tail<2>() = Eigen::Vector2d::Zero();
-            std::cout << delta.transpose() << std::endl;
+            // delta.template tail<2>() = Eigen::Vector2d::Zero();
+            // std::cout << Xk.boxminus(X0).transpose() << std::endl;
+            // std::cout << "K: " << K.rows() << ", " << K.cols() << std::endl;
+            // std::cout << "j dx: " << (Jk_inv * (Xk.boxminus(X0))).transpose() << std::endl;
+            // std::cout << "k zk: " << (K * zk).transpose() << std::endl;
             Xk.boxplus(delta);
 
             auto t2 = std::chrono::high_resolution_clock::now();
@@ -121,11 +137,20 @@ public:
             total_time += duration;
             count++;
 
-            if (i > 0 && Xk.boxminus(last_Xk).norm() < epsilon || i == max_iter){
+            // if (i > 0 && Xk.boxminus(last_Xk).norm() < epsilon || i == max_iter - 1){
+            if (i == max_iter - 1){
+                std::cout << "iter finish" << std::endl;
                 info.end_cost = zk.norm();
                 break;
             }
         }
+        normal_state = Xk;
+        // std::cout << K * Hk << std::endl;
+        error_cov = (ErrorStateConvarianceType::Identity() - K * Hk) * Pk;
+
+        // std::cout << Hk << std::endl;
+        // exit(0);
+        // std::cout << error_cov << std::endl << std::endl;
 
         info.avarave_iter_time = total_time / count;
         info.iter_times = count;

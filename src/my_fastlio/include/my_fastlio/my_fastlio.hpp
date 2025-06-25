@@ -14,8 +14,9 @@
 #include <condition_variable>
 #include <sophus/se3.hpp>
 #include <unordered_map>
+#include <vector>
 
-#include "ikd_Tree.h"
+// #include "ikd_Tree.h"
 #include "manifold/manifold.hpp"
 #include "manifold/s2.hpp"
 #include "manifold/so3.hpp"
@@ -74,6 +75,9 @@ public:
 
     typedef mfd::Manifolds<mfd::Vector<3>, mfd::Vector<3>> ControlType;
 
+    using IESKF = ieskf::IESKF<StateType, ControlType,12>;
+    using VMap = std::unordered_map<VOXEL_LOC, voxelmap::OctoTree *>;
+
     struct MeasurePack
     {
         std::shared_ptr<std::deque<ImuData>> imu_lst = std::make_shared<std::deque<ImuData>>();
@@ -97,11 +101,11 @@ public:
         V3T ba, bg;
         V3T grav;
         CloudPtr map;
+        std::shared_ptr<VMap> vmap;
         pcl::IndicesPtr filtered_indices;
+        std::shared_ptr<std::vector<voxelmap::ptpl>> ptpl;
     };
 
-    using IESKF = ieskf::IESKF<StateType, ControlType,12>;
-    using VMap = std::unordered_map<VOXEL_LOC, voxelmap::OctoTree *>;
 
     MyFastLIO();
     ~MyFastLIO();
@@ -157,7 +161,7 @@ public:
 
 private:
 
-    typedef KD_TREE<PointT> KDTree;
+    // typedef KD_TREE<PointT> KDTree;
     bool isReady()
     {
         if (R_ItoL_.has_value() &&
@@ -228,7 +232,7 @@ private:
 
     // void transformPCLCloud2GlobalVMap(CloudPtr cloud, CloudVmapPtr& vcloud);
 
-    bool esti_plane(V4T &pca_result, const KDTree::PointVector &point, const float &threshold);
+    // bool esti_plane(V4T &pca_result, const KDTree::PointVector &point, const float &threshold);
 
     void buildmapAndUpdate(std::shared_ptr<MeasurePack> meas);
 
@@ -238,7 +242,7 @@ private:
 
     void computeFxAndFw(IESKF::ErrorPropagateFx& fx, IESKF::ErrorPropagateFw& fw, const StateType& X, const IESKF::ErrorStateType& delta_x,const ControlType& u, const double dt);
 
-    void computeHxAndR(CloudXYZPtr filtered_cloud, IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& R, const StateType& Xk,const StateType& X);
+    void computeHxAndR(std::vector<voxelmap::ptpl>& ptpl, IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& R, const StateType& Xk,const StateType& X);
 
     void staticStateIMUInitialize();
 
@@ -270,9 +274,11 @@ private:
 
     CloudPtr map_for_publish = pcl::make_shared<CloudT>();
     pcl::IndicesPtr map_indices;
-    VMap vmap;
+    std::shared_ptr<std::vector<voxelmap::ptpl>> ptpl_cb = std::make_shared<std::vector<voxelmap::ptpl>>();
+
+    std::shared_ptr<VMap> vmap = std::make_shared<VMap>();
     // TODO: 超参数放在 config 中
-    double lidar_range_cov = 1e-4, lidar_angle_cov = 1e-4;
+    double lidar_range_cov = 0, lidar_angle_cov = 0;
     double max_voxel_size = 3.0;
     int max_layer = 4.0;
     std::vector<int> layer_size = std::vector<int>({5, 5, 5, 5, 5});
@@ -280,9 +286,9 @@ private:
     double plane_threshold = 0.01;
 
     // 超参数
-    int NUM_MAX_ITERATIONS = 8;
+    int NUM_MAX_ITERATIONS = 6;
 
-    const int frame_residual_count = 1500;
+    const int frame_residual_count = 2000;
     static constexpr int plane_N_search  = 5;
 
 };

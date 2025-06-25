@@ -1,6 +1,3 @@
 [submodule "src/livox_ros_driver"]
     path = src/livox_ros_driver
     url = https://github.com/Livox-SDK/livox_ros_driver.git
-[submodule "include/ikd-Tree"]
-    path = src/my_fastlio/src/mapper/ikd-Tree
-    url = https://github.com/hku-mars/ikd-Tree.git

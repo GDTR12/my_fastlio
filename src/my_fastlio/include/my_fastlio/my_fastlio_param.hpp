@@ -5,7 +5,7 @@
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
 #include <vector>
-#include "ikd_Tree.h"
+// #include "ikd_Tree.h"
 #include "pcl/pcl_macros.h"
 #include "voxel_map/voxel_map_util.hpp"
 #include "common_define.hpp"
@@ -31,7 +31,7 @@ using CloudT = pcl::PointCloud<PointT>;
 using CloudPtr = pcl::PointCloud<PointT>::Ptr;
 using CloudConstPtr = pcl::PointCloud<PointT>::ConstPtr;
 
-using PointIKDT = ikdTree_PointType;
+// using PointIKDT = ikdTree_PointType;
 
 using PointVMap = voxelmap::pointWithCov;
 using CloudVMap = std::vector<PointVMap>;

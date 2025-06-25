@@ -150,7 +150,7 @@ include_directories(
 ## Declare a C++ library
 add_library(${PROJECT_NAME}
   src/${PROJECT_NAME}/my_fastlio.cpp
-  src/mapper/ikd-Tree/ikd-Tree/ikd_Tree.cpp
+  # src/mapper/ikd-Tree/ikd-Tree/ikd_Tree.cpp
   src/mapper/voxel_map_util.cpp
 )
 
@@ -158,7 +158,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   ${EIGEN3_INCLUDE_DIR}
   ${PCL_INCLUDE_DIRS}
   ${CMAKE_CURRENT_LIST_DIR}/include
-  src/mapper/ikd-Tree/ikd-Tree
+  # src/mapper/ikd-Tree/ikd-Tree
 )
 
 ## Add cmake target dependencies of the library
