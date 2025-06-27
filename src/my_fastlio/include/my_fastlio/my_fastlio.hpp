@@ -10,19 +10,22 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <deque>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 #include <condition_variable>
 #include <sophus/se3.hpp>
 #include <unordered_map>
 #include <vector>
 
-// #include "ikd_Tree.h"
+#include "Eigen/src/Core/Matrix.h"
+#include "ikd_Tree.h"
 #include "manifold/manifold.hpp"
 #include "manifold/s2.hpp"
 #include "manifold/so3.hpp"
 #include "my_fastlio/my_fastlio_param.hpp"
 #include "ieskf/ieskf.hpp"
 
+#include "pcl/common/transforms.h"
 #include "pcl/make_shared.h"
 #include "pcl/pcl_base.h"
 #include "voxel_map/common_lib.h"
@@ -76,7 +79,6 @@ public:
     typedef mfd::Manifolds<mfd::Vector<3>, mfd::Vector<3>> ControlType;
 
     using IESKF = ieskf::IESKF<StateType, ControlType,12>;
-    using VMap = std::unordered_map<VOXEL_LOC, voxelmap::OctoTree *>;
 
     struct MeasurePack
     {
@@ -181,7 +183,7 @@ private:
 
     // typedef PointXYZ PointType;
     template<typename PointType>
-    void pclCloud2VoxelMapCloud(pcl::shared_ptr<pcl::PointCloud<PointType>> cloud, CloudVmapPtr& vcloud, const M4T& T)
+    void pclCloud2VoxelMapCloud(pcl::shared_ptr<pcl::PointCloud<PointType>> cloud, CloudVmapPtr& vcloud)
     {
         if (vcloud == nullptr){
             vcloud = pcl::make_shared<CloudVMap>();
@@ -202,7 +204,6 @@ private:
                 M3T cov;
                 voxelmap::calcBodyCov(p, lidar_range_cov, lidar_angle_cov, cov);
                 vp.point = p;
-                // vp.point_world = T.block<3,3>(0,0) * p + T.block<3,1>(0,3);
                 vp.cov = cov;
             }
         }
@@ -216,7 +217,7 @@ private:
         }
         CloudVmapPtr local_cloud(new CloudVMap), local_cloud2(new CloudVMap);
         Sophus::SE3d T_WtoIi(getM(kf.normal_state, R), getM(kf.normal_state, p));
-        pclCloud2VoxelMapCloud(cloud, local_cloud, (T_WtoIi * T_ItoL_).matrix());
+        pclCloud2VoxelMapCloud(cloud, local_cloud);
         M3T cov_R = kf.error_cov.block<3,3>(IDX_R_ItoL * 3, IDX_R_ItoL * 3);
         M3T cov_p = kf.error_cov.block<3,3>(IDX_p_ItoL * 3, IDX_p_ItoL * 3);
 
@@ -224,6 +225,29 @@ private:
         cov_R = kf.error_cov.block<3,3>(IDX_R * 3, IDX_R * 3);
         cov_p = kf.error_cov.block<3,3>(IDX_p * 3, IDX_p * 3);
         transformVoxelCloud(local_cloud2, global_cloud, T_WtoIi.rotationMatrix(), T_WtoIi.translation(), cov_R, cov_p);
+    }
+
+    // using PointType = pcl::PointXYZ;
+    template<typename PointType>
+    void transformPCLCloud2GlobalKDTreeMap(pcl::shared_ptr<pcl::PointCloud<PointType>> cloud, CloudKdTreePtr& global_cloud)
+    {
+        if (cloud == nullptr){
+            throw std::runtime_error("Input cloud ptr is null!");
+        }
+        if (global_cloud == nullptr){
+            global_cloud = pcl::make_shared<CloudKdTree>();
+        }
+
+        Sophus::SE3d T_WtoIi(getM(kf.normal_state, R), getM(kf.normal_state, p));
+        Sophus::SE3d T_ItoL(getM(kf.normal_state, R_ItoL), getM(kf.normal_state, p_ItoL));
+        Sophus::SE3d T_WtoLi = T_WtoIi * T_ItoL;
+        global_cloud->resize(cloud->size());
+        for (int i = 0; i < cloud->size(); i++){
+            Eigen::Vector3d p = T_WtoLi * cloud->at(i).getVector3fMap().template cast<double>();
+            global_cloud->at(i).x = p.x();
+            global_cloud->at(i).y = p.y();
+            global_cloud->at(i).z = p.z();
+        }
     }
 
     inline void transformVoxelPoint(const PointVMap& in, PointVMap& out, const M3T& R, const V3T& t, const M3T& cov_R, const M3T& cov_p);
@@ -242,7 +266,9 @@ private:
 
     void computeFxAndFw(IESKF::ErrorPropagateFx& fx, IESKF::ErrorPropagateFw& fw, const StateType& X, const IESKF::ErrorStateType& delta_x,const ControlType& u, const double dt);
 
-    void computeHxAndR(std::vector<voxelmap::ptpl>& ptpl, IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& R, const StateType& Xk,const StateType& X);
+    void computeHxAndRinvWithCov(std::vector<voxelmap::ptpl>& ptpl, IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& R, const StateType& Xk,const StateType& X, bool with_cov = true);
+
+    // void computeHxAndRinvKDTree(std::vector<voxelmap::ptpl>& ptpls, IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& R, const StateType& Xk,const StateType& X);
 
     void staticStateIMUInitialize();
 
@@ -277,16 +303,24 @@ private:
     std::shared_ptr<std::vector<voxelmap::ptpl>> ptpl_cb = std::make_shared<std::vector<voxelmap::ptpl>>();
 
     std::shared_ptr<VMap> vmap = std::make_shared<VMap>();
+    KDTree kdtree;
+    CloudVmapPtr init_vmap = pcl::make_shared<CloudVMap>();
+    bool vmap_init_complete = false;
+
     // TODO: 超参数放在 config 中
     double lidar_range_cov = 0, lidar_angle_cov = 0;
     double max_voxel_size = 3.0;
     int max_layer = 4.0;
     std::vector<int> layer_size = std::vector<int>({5, 5, 5, 5, 5});
     int max_point_size = 200; int max_cov_point_size = 200; 
-    double plane_threshold = 0.01;
+    double plane_threshold = 0.1;
+
+    int MAX_H_DIMENSION = 1800;
 
     // 超参数
-    int NUM_MAX_ITERATIONS = 6;
+    int NUM_MAX_ITERATIONS = 5;
+
+    int time_for_init_map = 8;
 
     const int frame_residual_count = 2000;
     static constexpr int plane_N_search  = 5;

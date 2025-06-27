@@ -5,7 +5,7 @@
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
 #include <vector>
-// #include "ikd_Tree.h"
+#include "ikd_Tree.h"
 #include "pcl/pcl_macros.h"
 #include "voxel_map/voxel_map_util.hpp"
 #include "common_define.hpp"
@@ -36,6 +36,13 @@ using CloudConstPtr = pcl::PointCloud<PointT>::ConstPtr;
 using PointVMap = voxelmap::pointWithCov;
 using CloudVMap = std::vector<PointVMap>;
 using CloudVmapPtr = pcl::shared_ptr<CloudVMap>;
+
+using VMap = std::unordered_map<VOXEL_LOC, voxelmap::OctoTree *>;
+using PointKdTree = ikdTree_PointType;
+using KDTree = KD_TREE<PointKdTree>;
+using CloudKdTree = KD_TREE<PointKdTree>::PointVector;
+using CloudKdTreePtr = pcl::shared_ptr<CloudKdTree>; 
+
 
 struct ImuData
 {

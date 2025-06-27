@@ -26,8 +26,9 @@
 #include <omp.h>
 #include <vector>
 #include "utils/slam_utils.hpp"
+#include "voxel_map/common_lib.h"
 #include "voxel_map/voxel_map_util.hpp"
-
+#include "ikd_Tree.h"
 
 namespace my_fastlio
 {
@@ -47,19 +48,19 @@ MyFastLIO::MyFastLIO()
     MyFastLIO::IESKF::NoiseConvarianceType noise_cov;
     MyFastLIO::IESKF::ErrorStateConvarianceType error_cov;
     error_cov.setZero();
-    error_cov.block<3,3>(0,0) = 1e-5 * M3T::Identity();
-    error_cov.block<3,3>(3,3) = 1e-5 * M3T::Identity();
+    error_cov.block<3,3>(0,0) = 1e-3 * M3T::Identity();
+    error_cov.block<3,3>(3,3) = 1e-3 * M3T::Identity();
     error_cov.block<3,3>(6,6) = 1e-5 * M3T::Identity();
     error_cov.block<3,3>(9,9) = 1e-5 * M3T::Identity();
-    error_cov.block<3,3>(12, 12) = 1e-4 * M3T::Identity();
-    error_cov.block<3,3>(15, 15) = 1e-5 * M3T::Identity();
-    error_cov.block<3,3>(18, 18) = 1e-5 * M3T::Identity();
+    error_cov.block<3,3>(12, 12) = 1e-3 * M3T::Identity();
+    error_cov.block<3,3>(15, 15) = 1e-2 * M3T::Identity();
+    error_cov.block<3,3>(18, 18) = 1e-2 * M3T::Identity();
     error_cov.block<2,2>(21, 21) = 1e-7 * M2T::Identity();
     noise_cov.setZero();
-    noise_cov.block<3,3>(0,0) = 1e-4 * M3T::Identity();
-    noise_cov.block<3,3>(3,3) = 1e-4 * M3T::Identity();
-    noise_cov.block<3,3>(6,6) = 1e-5 * M3T::Identity();
-    noise_cov.block<3,3>(9,9) = 1e-5 * M3T::Identity();
+    noise_cov.block<3,3>(0,0) = 1e-2 * M3T::Identity();
+    noise_cov.block<3,3>(3,3) = 1e-2 * M3T::Identity();
+    noise_cov.block<3,3>(6,6) = 1e-3 * M3T::Identity();
+    noise_cov.block<3,3>(9,9) = 1e-3 * M3T::Identity();
 
     (*this).setErrorConvariance(error_cov)
            .setNoiseConvariance(noise_cov);
@@ -90,16 +91,18 @@ bool MyFastLIO::imuAsyncPushImu(std::shared_ptr<ImuData> data)
 bool MyFastLIO::lidarAsyncPushLidar(std::shared_ptr<LidarData> lidar_)
 {
     lidar_data_queue_.push_back(lidar_);
-    std::unique_lock<std::mutex> lock(meas_pack_mutex_);
-    while (lidar_data_queue_.size() > 0){
-        std::shared_ptr<LidarData> lidar = lidar_data_queue_.front();
-        if (imu_data_queue_.back()->time < lidar->time) return true;
+    // if (lidar_data_queue_.size() < 2) return true;
 
+    std::unique_lock<std::mutex> lock(meas_pack_mutex_);
+    while (lidar_data_queue_.size() > 1){
+        std::shared_ptr<LidarData> lidar = lidar_data_queue_.front();
+        double end_time = lidar_data_queue_[1]->time;
+        if (end_time > imu_data_queue_.back()->time) return true;
+        
         auto meas = std::make_shared<MeasurePack>();
-        while (!imu_data_queue_.empty())
-        {
+        while (!imu_data_queue_.empty()){
             auto& imu = imu_data_queue_.front();
-            if (imu->time > lidar->time) break;
+            if (imu->time > end_time) break;
             meas->imu_lst->push_back(*imu);
             imu_data_queue_.pop_front();
         }
@@ -110,8 +113,32 @@ bool MyFastLIO::lidarAsyncPushLidar(std::shared_ptr<LidarData> lidar_)
         lidar_data_queue_.pop_front();
     }
     lock.unlock();
-    meas_pack_cond_.notify_one();
+    meas_pack_cond_.notify_all();
     return true;
+    
+    // lidar_data_queue_.push_back(lidar_);
+    // std::unique_lock<std::mutex> lock(meas_pack_mutex_);
+    // while (lidar_data_queue_.size() > 0){
+    //     std::shared_ptr<LidarData> lidar = lidar_data_queue_.front();
+    //     if (imu_data_queue_.back()->time < lidar->time) return true;
+
+    //     auto meas = std::make_shared<MeasurePack>();
+    //     while (!imu_data_queue_.empty())
+    //     {
+    //         auto& imu = imu_data_queue_.front();
+    //         if (imu->time > lidar->time) break;
+    //         meas->imu_lst->push_back(*imu);
+    //         imu_data_queue_.pop_front();
+    //     }
+    //     if (meas->imu_lst->size() > 0){
+    //         meas->cloud = lidar;
+    //         meas_pack_.push_back(meas);
+    //     }
+    //     lidar_data_queue_.pop_front();
+    // }
+    // lock.unlock();
+    // meas_pack_cond_.notify_one();
+    // return true;
 }
 
 void MyFastLIO::imuPropagate(const ImuData& imu0, const ImuData& imu1)
@@ -169,7 +196,7 @@ void MyFastLIO::handlePack()
     }
     std::cout << "[forward] imu propagate cost: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl; 
 
-    // lidarCompensation(meas, imu_odo);
+    lidarCompensation(meas, imu_odo);
 
     buildmapAndUpdate(meas);
 
@@ -180,7 +207,7 @@ void MyFastLIO::handlePack()
 void MyFastLIO::lidarCompensation(std::shared_ptr<MeasurePack> meas, const std::deque<std::pair<double, Sophus::SE3d>>& tmp_odo)
 {
     auto& cloud = meas->cloud->cloud;
-    pcl::io::savePCDFile("/root/workspace/my_fastlio/build/bagsave/before.pcd", *cloud);
+    // pcl::io::savePCDFile("/root/workspace/my_fastlio/build/bagsave/before.pcd", *cloud);
     auto getPose = [&tmp_odo](double t, Sophus::SE3d& ret){
         int idx = 0;
         for (int i = 0; i < tmp_odo.size() - 1; i++){
@@ -213,7 +240,7 @@ void MyFastLIO::lidarCompensation(std::shared_ptr<MeasurePack> meas, const std::
         for (int i = 0; i < cloud->points.size(); i++)
         {
             auto& p_inj = cloud->points[i];
-            double t = meas->cloud->time - p_inj.curvature;
+            double t = meas->cloud->time + p_inj.curvature;
             Sophus::SE3d T_I0toIj;
             if (!getPose(t, T_I0toIj)){
                 continue;
@@ -237,7 +264,9 @@ void MyFastLIO::lidarCompensation(std::shared_ptr<MeasurePack> meas, const std::
     auto t2 = std::chrono::high_resolution_clock::now();
     auto add_duration = std::chrono::duration_cast<std::chrono::microseconds>(t2-t1).count();      
     std::cout << "[backward] undistort " << count << " points(" << float(add_duration)/1e3 <<" ms): " << double(count) / double(cloud->points.size()) * 100 << "% avarage change: " << ava_change.transpose() / double(count) << std::endl;
-    pcl::io::savePCDFile("/root/workspace/my_fastlio/build/bagsave/after.pcd", *cloud);
+
+
+    // pcl::io::savePCDFile("/root/workspace/my_fastlio/build/bagsave/after.pcd", *cloud);
     // #ifdef _OPENMP
     // std::cout << "OpenMP enabled with " << omp_get_max_threads() << " threads\n";
     // #else
@@ -422,10 +451,8 @@ void MyFastLIO::transformVoxelCloud(CloudVmapPtr in, CloudVmapPtr& out, const M3
 
 
 
-void MyFastLIO::computeHxAndR(std::vector<voxelmap::ptpl>& ptpl, IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& Rk_inv, const StateType& Xk,const StateType& X)
+void MyFastLIO::computeHxAndRinvWithCov(std::vector<voxelmap::ptpl>& ptpl, IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& Rk_inv, const StateType& Xk,const StateType& X, bool with_cov)
 {
-    // std::cout << "[update] avarage scan matched num: " << ptpl.size() << ", cost: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl;
-
     H.resize(ptpl.size(), StateType::DOF);
     H.setZero();
     Rk_inv.resize(ptpl.size(), ptpl.size());
@@ -461,78 +488,206 @@ void MyFastLIO::computeHxAndR(std::vector<voxelmap::ptpl>& ptpl, IESKF::ObserveR
             Huq.block<1,3>(0, 3) = uT;
             Eigen::Matrix<double, 1, 3> Hp = uTR * R_ItoL;
 
-            Rk_inv(i,i) = Huq * ptpl[i].plane_cov * Huq.transpose();
-            Rk_inv(i, i) += Hp * ptpl[i].point_cov * Hp.transpose();
-            Rk_inv(i, i) = 1 * 1e9 / Rk_inv(i, i);
+            if (with_cov){
+                Rk_inv(i,i) = Huq * ptpl[i].plane_cov * Huq.transpose();
+                Rk_inv(i, i) += Hp * ptpl[i].point_cov * Hp.transpose();
+                Rk_inv(i, i) = 1 / Rk_inv(i, i);
+            }else{
+                Rk_inv(i, i) = 1e4;
+            }
 
             zk(i, 0) = uT * vec;
         }
+        // double avarage_R = Rk_inv.diagonal().lpNorm<1>() / Rk_inv.rows();
+        // Rk_inv *= 1e4 / avarage_R;
+        std::cout << "\n==============================================\n"; 
+        std::cout << Rk_inv.diagonal().lpNorm<1>() / Rk_inv.rows();
+        std::cout << "\n==============================================\n"; 
     
     }
-    // std::cout << "[update] measure " << ptpl.size() << " points (res " << zk.norm() << "), cost: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl;
-    // std::cout << zk.transpose() << std::endl;
-    // std::cout << Rk_inv.diagonal().transpose() << std::endl;
 }
 
 
+/* 利用 ikd-tree 构建初始地图 */
+// void MyFastLIO::computeHxAndRinvKDTree(std::vector<voxelmap::ptpl>& ptpls, IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& Rk_inv, const StateType& Xk,const StateType& X)
+// {
+//     H.resize(ptpls.size(), StateType::DOF);
+//     H.setZero();
+//     Rk_inv.resize(ptpls.size(), ptpls.size());
+//     Rk_inv.setZero();
+//     zk.resize(ptpls.size(), 1);
+
+//     omp_set_num_threads(4);
+
+//     M3T R = getM(Xk, R).matrix();
+//     V3T p = getM(Xk, p).matrix();
+//     M3T R_ItoL = getM(Xk, R_ItoL).matrix();
+//     V3T p_ItoL = getM(Xk, p_ItoL).matrix();
+//     // 实测单核心更快
+//     // #pragma omp parallel
+//     {
+//         // #pragma omp for nowait
+//         for(int i = 0; i < ptpls.size(); i++)
+//         {
+//             Eigen::Matrix<double, 1, 3> uT = ptpls[i].normal.transpose();
+//             Eigen::Matrix<double, 1, 3> uTR = uT * R;
+//             V3T& pl = ptpls[i].point;
+//             V3T& q = ptpls[i].center;
+//             H.block<1, 3>(i, IDX_p * 3) = uT;
+//             H.block<1, 3>(i, IDX_R * 3) = -uTR * SO3Hat(R_ItoL * pl + p_ItoL);
+//             // H.block<1, 3>(i, IDX_R_ItoL * 3) = -uTR * R_ItoL * SO3Hat(pl);
+//             // H.block<1, 3>(i, IDX_p_ItoL * 3) = uTR;
+//             // if (i < 10) std::cout << H.row(i) << std::endl;
+
+//             // Eigen::Matrix<double, 1, 6> Huq;
+//             // V3T vec = (R * (R_ItoL * pl + p_ItoL) + p - q);
+//             // Huq.block<1,3>(0, 0) = vec.transpose();
+//             // Huq.block<1,3>(0, 3) = uT;
+//             // Eigen::Matrix<double, 1, 3> Hp = uTR * R_ItoL;
+
+
+//             Rk_inv(i, i) = 1e4;
+
+//             // zk(i, 0) = uT * vec;
+//             zk(i, 0) = uT * (R * (R_ItoL * pl + p_ItoL) + p) + ptpls[i].d;
+//             // if (i == 0) std::cout << zk(i,0) << " " << ptpls[i].d << std::endl;
+//         }
+    
+//     }
+// }
 
 
 void MyFastLIO::buildmapAndUpdate(std::shared_ptr<MeasurePack> meas)
 {
     auto start = slam_utils::TimerHelper::start();
     static double start_time = 0;
-    if (vmap->empty()){
-        CloudPtr cloud(new CloudT);
-        std::unique_lock<std::mutex> lock(meas_pack_mutex_);
-        for(int i = 0; i < meas_pack_.size(); i++){
-            if (i == 0){
-                start_time = meas_pack_[i]->cloud->time;
-            }
-            if (meas_pack_[i]->cloud->time - 1.5 > start_time){
-                break;
-            }
-            CloudT tmp;
-            pcl::transformPointCloud(*meas_pack_[i]->cloud->cloud, tmp, T_ItoL_.matrix().cast<float>());
-            *cloud += tmp;
-        }
-        // pcl::io::savePCDFile("/root/workspace/my_fastlio/build/bagsave/pre_map.pcd", *cloud);
+    std::cout << "[measure] " << start_time << ", " << meas->cloud->time << std::endl;
 
-        CloudVmapPtr global_cloud;
-        transformPCLCloud2GlobalVMap(cloud, global_cloud);
-        std::cout << "cloud to global vmap cost: " << slam_utils::TimerHelper::end(start) << std::endl;
-        buildVoxelMap(*global_cloud, max_voxel_size, max_layer, layer_size,
-                      max_point_size, max_cov_point_size, plane_threshold,
-                      *vmap);
-        map_for_publish = meas->cloud->cloud;
-        start_time = meas->cloud->time;
-    // }else if (meas->cloud->time - start_time < 1.8){
-    //     CloudVmapPtr global_cloud;
-    //     transformPCLCloud2GlobalVMap(meas->cloud->cloud, global_cloud);
-    //     voxelmap::updateVoxelMap(*global_cloud, max_voxel_size, max_layer, layer_size,
-    //                   max_point_size, max_cov_point_size, plane_threshold,
-    //                   *vmap);
-    }else{
-        auto start = slam_utils::TimerHelper::start();
+    if (!vmap_init_complete){
         CloudXYZPtr filtered_cloud(new CloudXYZ);
-        // pcl::RandomSample<PointXYZ> sample;
         pcl::VoxelGrid<pcl::PointXYZ> sample;
         CloudXYZPtr xyz_cloud(new CloudXYZ);
         pcl::copyPointCloud(*meas->cloud->cloud, *xyz_cloud);
-        // sample.setSample(frame_residual_count);
-        sample.setLeafSize(0.3, 0.3, 0.3);
+        sample.setLeafSize(0.5, 0.5, 0.5);
         sample.setInputCloud(xyz_cloud);
         sample.filter(*filtered_cloud);
-        map_indices = sample.getIndices();
-        map_for_publish = meas->cloud->cloud;
 
-        std::cout << "[update] filter num: " << filtered_cloud->size() << ", cost: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl;
-        
+        if (kdtree.size() == 0){
+            CloudKdTreePtr global_cloud;
+            transformPCLCloud2GlobalKDTreeMap(filtered_cloud, global_cloud);
+            kdtree.Build(*global_cloud);
+            start_time = meas->cloud->time;
+        }else if(meas->cloud->time - start_time < time_for_init_map){
+
+            CloudKdTreePtr target_cloud(new CloudKdTree);
+            transformPCLCloud2GlobalKDTreeMap(filtered_cloud, target_cloud);
+            CloudXYZPtr kdtree_add_cloud(new CloudXYZ);
+
+            std::vector<voxelmap::ptpl>& ptpls = *ptpl_cb;
+            ptpls.clear();
+            for(int i = 0; i < target_cloud->size(); i++){
+                const PointXYZ& local_p = filtered_cloud->at(i);
+                const PointKdTree& global_p = target_cloud->at(i);
+                
+                CloudKdTree nears;
+                std::vector<float> dists;
+                
+                kdtree.Nearest_Search(global_p, 5, nears, dists);
+                if (nears.size() < 5 || dists.back() > 5) continue;
+                Eigen::Matrix<double, 4, 1> plane;
+                PointVector pts;
+                V3T center = V3T::Zero();
+                for(auto p : nears){
+                    PointType pt;
+                    pt.x = p.x;
+                    pt.y = p.y;
+                    pt.z = p.z;
+                    pts.push_back(pt);
+                    center += V3T(p.x, p.y, p.z);
+                }
+                center /= nears.size();
+                double score;
+                if (esti_plane<double>(plane, pts, plane_threshold, score)){
+                    voxelmap::ptpl ptpl;
+                    ptpl.normal = plane.head(3);
+                    ptpl.center = center;
+                    ptpl.point = V3T(local_p.x, local_p.y, local_p.z);
+                    // ptpl.d = (V3T(global_p.x, global_p.y, global_p.z) - center).dot(ptpl.normal);
+                    ptpl.d = plane(3);
+                    ptpl.score = score;
+                    float pd2 = plane(0) * global_p.x + plane(1) * global_p.y + plane(2) * global_p.z + plane(3);
+                    double s = 1 - 0.9 * fabs(pd2) / sqrt(ptpl.point.norm());
+                    if(s < 0.9 ){
+                        continue;
+                    }
+                    ptpls.push_back(ptpl);
+                    PointXYZ p_kd;
+                    p_kd.x = local_p.x; p_kd.y = local_p.y; p_kd.z = local_p.z;
+                    kdtree_add_cloud->push_back(p_kd);
+                }
+            }
+            std::sort(ptpls.begin(), ptpls.end(), [](const voxelmap::ptpl& ptpl0, const voxelmap::ptpl& ptpl1){
+                if (ptpl0.score < ptpl1.score){
+                    return true;
+                }else{
+                    return false;
+                }
+            });
+            if (MAX_H_DIMENSION < ptpls.size()){
+                ptpls.erase(ptpls.begin() + MAX_H_DIMENSION, ptpls.end());
+            }
+
+            std::cout << "[measure] " << "ori: " << filtered_cloud->size() << ", ptpl: " << ptpls.size() << ", add: " << kdtree_add_cloud->size() << std::endl;
+
+            /* 构建 Hx 和 R */
+            kf.computeHxAndRinv = [this](IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& Rinv, const StateType& Xk,const StateType& X){
+                this->computeHxAndRinvWithCov(*ptpl_cb, zk, H, Rinv, Xk, X, false);
+            };
+            // std::cout << "cov: \n" << kf.error_cov << std::endl;
+            auto info = kf.update(NUM_MAX_ITERATIONS, 1e-8);
+
+            std::cout << "[update] cost change: " << info.begin_cost << " -> " << info.end_cost << ", change: " << info.begin_cost - info.end_cost << std::endl;
+            std::cout << "[update] average iter time: " << info.avarave_iter_time << std::endl;
+            std::cout << "[update] total iteration time(" << info.iter_times << " nums): " << info.cost_time << " ms" << std::endl;
+
+            /* ikdtree 添加点云 */
+            CloudKdTreePtr global_cloud(new CloudKdTree);
+            transformPCLCloud2GlobalKDTreeMap(kdtree_add_cloud, global_cloud);
+            kdtree.Add_Points(*global_cloud, false);
+            map_for_publish = meas->cloud->cloud;
+
+            CloudVmapPtr global_vmap(new CloudVMap);
+            transformPCLCloud2GlobalVMap(kdtree_add_cloud, global_vmap);
+
+            if (vmap->empty()){
+                voxelmap::buildVoxelMap(*global_vmap, max_voxel_size, max_layer, layer_size,
+                            max_point_size, max_cov_point_size, plane_threshold,
+                            *vmap);
+            }else{
+                voxelmap::updateVoxelMap(*global_vmap, max_voxel_size, max_layer, layer_size,
+                            max_point_size, max_cov_point_size, plane_threshold,
+                            *vmap);
+            }
+            if (meas->cloud->time - start_time > time_for_init_map - 0.3) vmap_init_complete = true;
+        }
+
+    }else{
+        auto start = slam_utils::TimerHelper::start();
+        CloudXYZPtr filtered_cloud(new CloudXYZ);
+        pcl::VoxelGrid<pcl::PointXYZ> sample;
+        CloudXYZPtr xyz_cloud(new CloudXYZ);
+        pcl::copyPointCloud(*meas->cloud->cloud, *xyz_cloud);
+        sample.setLeafSize(0.2, 0.2, 0.2);
+        sample.setInputCloud(xyz_cloud);
+        sample.filter(*filtered_cloud);
+
+        map_for_publish = meas->cloud->cloud;
 
         CloudVmapPtr local_cloud;
         Sophus::SE3d T_WtoIi(getM(kf.normal_state, R), getM(kf.normal_state, p));
         Sophus::SE3d T_ItoL(getM(kf.normal_state, R_ItoL), getM(kf.normal_state, p_ItoL)); 
         Sophus::SE3d T_WtoLi = T_WtoIi * T_ItoL;
-        pclCloud2VoxelMapCloud(filtered_cloud, local_cloud, (T_WtoIi * T_ItoL).matrix());
+        pclCloud2VoxelMapCloud(filtered_cloud, local_cloud);
 
         std::vector<Eigen::Vector3d> point_world(filtered_cloud->size());
         for(int i = 0 ; i < filtered_cloud->size(); i++){
@@ -541,12 +696,14 @@ void MyFastLIO::buildmapAndUpdate(std::shared_ptr<MeasurePack> meas)
 
         
         std::vector<voxelmap::ptpl>& ptpl = *ptpl_cb;
+        ptpl.clear();
         std::vector<Eigen::Vector3d> non_match;
-        voxelmap::BuildResidualListOMP(*vmap, max_voxel_size, 1, max_layer, *local_cloud, point_world, ptpl, non_match);
+        voxelmap::BuildResidualListOMP(*vmap, max_voxel_size, 3, max_layer, *local_cloud, point_world, ptpl, non_match);
 
+        std::cout << "[measure] " << "ori: " << filtered_cloud->size() << ", ptpl: " << ptpl.size() << std::endl;
 
         kf.computeHxAndRinv = [this](IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& Rinv, const StateType& Xk,const StateType& X){
-            this->computeHxAndR(*ptpl_cb, zk, H, Rinv, Xk, X);
+            this->computeHxAndRinvWithCov(*ptpl_cb, zk, H, Rinv, Xk, X);
         };
         IESKFUpdateInfo info = kf.update(NUM_MAX_ITERATIONS, 1e-4);
         std::cout << "[update] cost change: " << info.begin_cost << " -> " << info.end_cost << ", change: " << info.begin_cost - info.end_cost << std::endl;
@@ -574,13 +731,24 @@ void MyFastLIO::lioThread()
         if (updateCallback){
             std::shared_ptr<CallbackInfo> ret_info(new CallbackInfo);
             ret_info->time = last_meas_->cloud->time;
-            ret_info->pose = Sophus::SE3d(getM(kf.normal_state, R), getM(kf.normal_state, p));
+            Sophus::SE3d T_WtoIi = Sophus::SE3d(getM(kf.normal_state, R), getM(kf.normal_state, p));
+            Sophus::SE3d T_WtoLi = T_WtoIi * Sophus::SE3d(getM(kf.normal_state, R_ItoL), getM(kf.normal_state, p_ItoL));
+            ret_info->pose = T_WtoLi;
+            // ret_info->pose = Sophus::SE3d(getM(kf.normal_state, R), getM(kf.normal_state, p));
             ret_info->vel = getM(kf.normal_state, v);
             ret_info->map = map_for_publish;
             ret_info->filtered_indices = map_indices;
             ret_info->vmap = vmap;
             ret_info->ptpl = ptpl_cb;
             updateCallback.value()(ret_info);
+            std::cout << "q: " << getM(kf.normal_state, R).unit_quaternion().coeffs().transpose() << std::endl;
+            std::cout << "p: " << getM(kf.normal_state, p).transpose() << std::endl;
+            std::cout << "q_ItoL: " << getM(kf.normal_state, R_ItoL).unit_quaternion().coeffs().transpose() << std::endl;
+            std::cout << "p_ItoL: " << getM(kf.normal_state, p_ItoL).transpose() << std::endl;
+            std::cout << "v: " << getM(kf.normal_state, v).transpose() << std::endl;
+            std::cout << "bw: " << getM(kf.normal_state, bw).transpose() << std::endl;
+            std::cout << "ba: " << getM(kf.normal_state, ba).transpose() << std::endl;
+            std::cout << "g: " << getM(kf.normal_state, g).transpose() << std::endl;
         }
     }
 }

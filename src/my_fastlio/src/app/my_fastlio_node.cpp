@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdlib>
+#include <csignal>
 #include <memory>
 #include <ros/ros.h>
 #include <Eigen/Core>
@@ -38,6 +39,7 @@ ros::Publisher pub_lidar_source;
 ros::Publisher pub_odometry;
 ros::Publisher pub_path;
 ros::Publisher pub_map;
+ros::Publisher pub_current;
 ros::Publisher pub_vmap;
 ros::Publisher pub_ptpl_p;
 ros::Publisher pub_ptpl_normal;
@@ -177,17 +179,18 @@ void lioUpdateCallback(std::shared_ptr<MyFastLIO::CallbackInfo> info)
     pose.pose.orientation.z = info->pose.unit_quaternion().z();
     pub_path.publish(path);
 
-    sensor_msgs::PointCloud2 map_msg;
     static int id_cloud = 0;
     if (info->map != nullptr) {
         if (info->map->size() > 0){
             CloudPtr filtered_pcd(new CloudT);
             pcl::transformPointCloud(*info->map, *filtered_pcd, info->pose.matrix().cast<float>());
+            sensor_msgs::PointCloud2 map_msg;
             pcl::toROSMsg(*filtered_pcd, map_msg);
             map_msg.header.frame_id = "map";
             map_msg.header.seq = id_cloud++;
             map_msg.header.stamp = ros::Time::now();
             pub_map.publish(map_msg);
+            pub_current.publish(map_msg);
         }
     }
     if (is_pub_voxelmap){
@@ -280,7 +283,7 @@ void lidarLivoxCallback(const livox_ros_driver::CustomMsgConstPtr& lidar_msg)
     cloud->points.reserve(lidar_msg->point_num);
     for (size_t i = 0; i < lidar_msg->point_num; ++i)
     {
-        if (lidar_msg->points[i].x * lidar_msg->points[i].x + lidar_msg->points[i].y * lidar_msg->points[i].y + lidar_msg->points[i].z * lidar_msg->points[i].z > 0.1
+        if (lidar_msg->points[i].x * lidar_msg->points[i].x + lidar_msg->points[i].y * lidar_msg->points[i].y + lidar_msg->points[i].z * lidar_msg->points[i].z > 4
             && (abs(lidar_msg->points[i].x - lidar_msg->points[i-1].x) > 1e-7 || abs(lidar_msg->points[i].y - lidar_msg->points[i-1].y) > 1e-7 || abs(lidar_msg->points[i].z - lidar_msg->points[i-1].z) > 1e-7))
         {
             PointT point;
@@ -315,6 +318,7 @@ int main(int argc, char** argv)
     pub_vmap = nh.advertise<MsgVmap>("/my_fastlio/vmap", 10);
     pub_ptpl_p = nh.advertise<sensor_msgs::PointCloud2>("/my_fastlio/ptpl_p", 10);
     pub_ptpl_normal = nh.advertise<MsgVmap>("/my_fastlio/ptpl_normal", 10);
+    pub_current = nh.advertise<sensor_msgs::PointCloud2>("/my_fastlio/current", 10);
 
     std::string lidar_type;
     nh.getParam("lidar_type", lidar_type);

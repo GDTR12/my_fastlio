@@ -57,6 +57,7 @@ typedef struct ptpl {
   Eigen::Vector3d center;
   Eigen::Matrix<double, 6, 6> plane_cov;
   Eigen::Matrix<double, 3, 3> point_cov;
+  double score;
   double d;
   int layer;
 } ptpl;

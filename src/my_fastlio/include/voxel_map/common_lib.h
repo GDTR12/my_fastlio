@@ -199,7 +199,7 @@ bool esti_normvector(Matrix<T, 3, 1> &normvec, const PointVector &point,
 
 template <typename T>
 bool esti_plane(Matrix<T, 4, 1> &pca_result, const PointVector &point,
-                const T &threshold) {
+                const T &threshold, double& score) {
   Matrix<T, NUM_MATCH_POINTS, 3> A;
   Matrix<T, NUM_MATCH_POINTS, 1> b;
   b.setOnes();
@@ -217,8 +217,12 @@ bool esti_plane(Matrix<T, 4, 1> &pca_result, const PointVector &point,
     if (fabs(normvec(0) * point[j].x + normvec(1) * point[j].y +
              normvec(2) * point[j].z + 1.0f) > threshold) {
       return false;
+    }else{
+      score += fabs(normvec(0) * point[j].x + normvec(1) * point[j].y +
+             normvec(2) * point[j].z + 1.0f);
     }
   }
+  score /= float(point.size());
 
   T n = normvec.norm();
   pca_result(0) = normvec(0) / n;
