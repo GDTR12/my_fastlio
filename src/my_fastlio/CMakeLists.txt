@@ -3,6 +3,7 @@ project(my_fastlio)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++17)
+add_definitions(-DPCL_NO_PRECOMPILE)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp")
 
 

@@ -1,7 +1,9 @@
 #pragma once
 
+#include <Eigen/SparseCholesky>
 #include "manifold/so3.hpp"
 #include <Eigen/Core>
+#include <Eigen/Sparse>
 #include <cstdlib>
 #include <functional>
 #include <manifold/manifold.hpp>
@@ -10,6 +12,7 @@
 #include <manifold/vector.hpp>
 #include <stdexcept>
 #include <chrono>
+#include <thread>
 #include <iostream>
 
 namespace ieskf{
@@ -51,6 +54,8 @@ public:
         error_cov = 1e-5 * ErrorStateConvarianceType::Identity();
         noise_cov = 1e-5 * NoiseConvarianceType::Identity();
         error_state.setZero();
+        Eigen::initParallel();
+        Eigen::setNbThreads(8); // 或设为固定线程数，如 4
     }
 
     void predict(const ErrorStateType& delta_x, const ControlType& u, const double dt)
@@ -100,13 +105,19 @@ public:
             auto t1 = std::chrono::high_resolution_clock::now();
             K.resize(StateType::DOF, Hk.rows());
             K.setZero();
-            K = (Hk.transpose() * R_inv * Hk + Pk.inverse()).ldlt().solve(Hk.transpose() * R_inv);
 
-            Eigen::Matrix<double, StateType::DOF, 1> delta = (-K * zk - (Eigen::Matrix<double, DIM_ERROR_STATE, DIM_ERROR_STATE>::Identity() - K * Hk) * Jk_inv * (Xk.boxminus(X0)));
+            Eigen::SparseMatrix<double> Hk_sp = Hk.sparseView();
+            Eigen::SparseMatrix<double> Rinv_sp = R_inv.sparseView();
 
-            // std::cout << "j dx: " << ((Eigen::Matrix<double, DIM_ERROR_STATE, DIM_ERROR_STATE>::Identity() - K * Hk) * Jk_inv * (Xk.boxminus(X0))).transpose() << std::endl;
-            // std::cout << "k zk: " << (K * zk).transpose() << std::endl;
-            // std::cout << "delta: " << delta.transpose() << std::endl;
+            Eigen::SparseMatrix<double> HkT_Rinv = Hk_sp.transpose() * Rinv_sp;
+            // Eigen::Matrix<double, DIM_ERROR_STATE, Eigen::Dynamic> HkT_Rinv = HkT_Rinv.eval();
+            // HkT_Rinv.resize(DIM_ERROR_STATE, Hk.rows());
+            // HkT_Rinv = Hk.transpose() * R_inv;
+
+            ErrorStateConvarianceType HkT_Rinv_Hk = (HkT_Rinv * Hk_sp).eval();
+
+            K = (HkT_Rinv_Hk + Pk.inverse()).ldlt().solve(HkT_Rinv.toDense());
+            ErrorStateType delta = (-K * zk - (ErrorStateConvarianceType::Identity() - K * Hk) * Jk_inv * (Xk.boxminus(X0)));
             Xk.boxplus(delta);
 
             auto t2 = std::chrono::high_resolution_clock::now();

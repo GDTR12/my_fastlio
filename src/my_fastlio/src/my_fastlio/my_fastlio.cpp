@@ -416,7 +416,16 @@ void MyFastLIO::staticStateIMUInitialize()
 //     return true;
 // }
 
-
+void MyFastLIO::accumalateVMap(CloudVmapPtr& source, CloudVmapPtr& target)
+{
+    if (target == nullptr){
+        throw std::runtime_error("target is null ptr");
+        return;
+    }
+    for (const auto& p : *source){
+        target->push_back(p);
+    }
+}
 
 
 inline void MyFastLIO::transformVoxelPoint(const PointVMap& in, PointVMap& out, const M3T& R, const V3T& t, const M3T& cov_R, const M3T& cov_p)
@@ -607,7 +616,7 @@ void MyFastLIO::buildmapAndUpdate(std::shared_ptr<MeasurePack> meas)
                 }
                 center /= nears.size();
                 double score;
-                if (esti_plane<double>(plane, pts, plane_threshold, score)){
+                if (esti_plane<double>(plane, pts, plane_threshold_kdtree, score)){
                     voxelmap::ptpl ptpl;
                     ptpl.normal = plane.head(3);
                     ptpl.center = center;
@@ -658,17 +667,22 @@ void MyFastLIO::buildmapAndUpdate(std::shared_ptr<MeasurePack> meas)
 
             CloudVmapPtr global_vmap(new CloudVMap);
             transformPCLCloud2GlobalVMap(kdtree_add_cloud, global_vmap);
+            accumalateVMap(global_vmap, init_vmap);
 
-            if (vmap->empty()){
-                voxelmap::buildVoxelMap(*global_vmap, max_voxel_size, max_layer, layer_size,
-                            max_point_size, max_cov_point_size, plane_threshold,
-                            *vmap);
-            }else{
-                voxelmap::updateVoxelMap(*global_vmap, max_voxel_size, max_layer, layer_size,
-                            max_point_size, max_cov_point_size, plane_threshold,
-                            *vmap);
-            }
-            if (meas->cloud->time - start_time > time_for_init_map - 0.3) vmap_init_complete = true;
+            if (meas->cloud->time - start_time > time_for_init_map - 0.3){
+                // transformPCLCloud2GlobalVMap(pcl::shared_ptr<pcl::PointCloud<PointType>> cloud, CloudVmapPtr &global_cloud)
+                if (vmap->empty()){
+                    voxelmap::buildVoxelMap(*init_vmap, max_voxel_size, max_layer, layer_size,
+                                max_point_size, max_cov_point_size, plane_threshold_vmap,
+                                *vmap);
+                    init_vmap.reset();
+                // }else{
+                //     voxelmap::updateVoxelMap(*global_vmap, max_voxel_size, max_layer, layer_size,
+                //                 max_point_size, max_cov_point_size, plane_threshold,
+                //                 *vmap);
+                }
+                vmap_init_complete = true;
+            } 
         }
 
     }else{
@@ -714,7 +728,7 @@ void MyFastLIO::buildmapAndUpdate(std::shared_ptr<MeasurePack> meas)
         transformPCLCloud2GlobalVMap(filtered_cloud, cloud_global);
         voxelmap::updateVoxelMap(*cloud_global, max_voxel_size, 
                 max_layer, layer_size, max_point_size, 
-                max_cov_point_size, plane_threshold, *vmap);
+                max_cov_point_size, plane_threshold_vmap, *vmap);
         std::cout << "[update] voxmap update cost: " << slam_utils::TimerHelper::end(start_vmap_update) << " ms" << std::endl;
         
         std::cout << "[update] total time: " << slam_utils::TimerHelper::end(start) << " ms" << std::endl;

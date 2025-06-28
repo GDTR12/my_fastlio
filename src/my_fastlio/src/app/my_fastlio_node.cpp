@@ -17,12 +17,15 @@
 #include "livox_ros_driver/CustomMsg.h"
 #include "manifold/manifold.hpp"
 #include "pcl/common/transforms.h"
+#include "pcl/filters/random_sample.h"
+#include "pcl/filters/voxel_grid.h"
 #include "pcl/impl/point_types.hpp"
 #include "pcl/point_cloud.h"
 #include "ros/publisher.h"
 #include "ros/rate.h"
 #include "ros/time.h"
 #include "visualization_msgs/Marker.h"
+#include "voxel_map/common_lib.h"
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <visualization_msgs/MarkerArray.h>
@@ -183,13 +186,23 @@ void lioUpdateCallback(std::shared_ptr<MyFastLIO::CallbackInfo> info)
     if (info->map != nullptr) {
         if (info->map->size() > 0){
             CloudPtr filtered_pcd(new CloudT);
+            // pcl::RandomSample<PointT> filter;
+            // // filter.setLeafSize(0.2, 0.2, 0.2);
+            // filter.setSample(10000);
+            // filter.setInputCloud(info->map);
+            // // filter.setDownsampleAllData(true);                // *** 保留 intensity 和 normal 字段 ***
+            // // filter.setMinimumPointsNumberPerVoxel(1);         // 每个体素至少保留 1 个点（可选）
+            // filter.filter(*filtered_pcd);
+            // CloudT pub_cloud;
             pcl::transformPointCloud(*info->map, *filtered_pcd, info->pose.matrix().cast<float>());
             sensor_msgs::PointCloud2 map_msg;
             pcl::toROSMsg(*filtered_pcd, map_msg);
             map_msg.header.frame_id = "map";
             map_msg.header.seq = id_cloud++;
             map_msg.header.stamp = ros::Time::now();
-            pub_map.publish(map_msg);
+            if (id_cloud % 5 == 0){
+                pub_map.publish(map_msg);
+            }
             pub_current.publish(map_msg);
         }
     }
@@ -214,13 +227,14 @@ void lioUpdateCallback(std::shared_ptr<MyFastLIO::CallbackInfo> info)
             float b = float(rand()) / float(RAND_MAX);
             pcl::PointXYZRGB p_cent;
             p_cent.getVector3fMap() = ptpl.center.cast<float>();
-            p_cent.getRGBVector3i() = (255.0 * Eigen::Matrix<float, 3, 1>(r, g, b)).cast<int>();
+            // p_cent.getRGBVector3i() = (255.0 * Eigen::Matrix<float, 3, 1>(r, g, b)).cast<int>();
+            p_cent.r = 255 * r; p_cent.b = 255 * b; p_cent.g = 255 * g;
             pcd.push_back(p_cent);
             
             pcl::PointXYZRGB p_pcd;
             p_pcd.getVector3fMap() = (info->pose * ptpl.point).cast<float>();
             
-            p_pcd.getRGBVector3i() = (255.0 * Eigen::Matrix<float, 3, 1>(r, g, b)).cast<int>();
+            p_pcd.r = 255 * r; p_pcd.b = 255 * b; p_pcd.g = 255 * g;
             pcd.push_back(p_pcd);
 
             visualization_msgs::Marker normal;

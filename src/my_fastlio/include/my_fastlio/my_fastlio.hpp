@@ -227,6 +227,8 @@ private:
         transformVoxelCloud(local_cloud2, global_cloud, T_WtoIi.rotationMatrix(), T_WtoIi.translation(), cov_R, cov_p);
     }
 
+    void accumalateVMap(CloudVmapPtr& vmap0, CloudVmapPtr& vmap1);
+
     // using PointType = pcl::PointXYZ;
     template<typename PointType>
     void transformPCLCloud2GlobalKDTreeMap(pcl::shared_ptr<pcl::PointCloud<PointType>> cloud, CloudKdTreePtr& global_cloud)
@@ -308,12 +310,13 @@ private:
     bool vmap_init_complete = false;
 
     // TODO: 超参数放在 config 中
-    double lidar_range_cov = 0, lidar_angle_cov = 0;
-    double max_voxel_size = 3.0;
-    int max_layer = 4.0;
-    std::vector<int> layer_size = std::vector<int>({5, 5, 5, 5, 5});
+    double lidar_range_cov = 1e-4, lidar_angle_cov = 1e-6;
+    double max_voxel_size = 2.0;
+    int max_layer = 3.0;
+    std::vector<int> layer_size = std::vector<int>({20, 10, 10, 5, 5});
     int max_point_size = 200; int max_cov_point_size = 200; 
-    double plane_threshold = 0.1;
+    double plane_threshold_kdtree = 0.1;
+    double plane_threshold_vmap = 0.01;
 
     int MAX_H_DIMENSION = 1800;
 
