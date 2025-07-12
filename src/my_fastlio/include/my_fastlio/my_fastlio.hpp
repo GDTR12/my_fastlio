@@ -19,6 +19,7 @@
 
 #include "Eigen/src/Core/Matrix.h"
 #include "ikd_Tree.h"
+#include "ivgicp.hpp"
 #include "manifold/manifold.hpp"
 #include "manifold/s2.hpp"
 #include "manifold/so3.hpp"
@@ -86,6 +87,14 @@ public:
         std::shared_ptr<LidarData> cloud = std::make_shared<LidarData>();
     };
 
+    enum ObservationMethod
+    {
+        POINT_TO_PLANE  = 0,
+        POINT_TO_VOXELMAP,
+        METHOD_VGICP
+    };
+
+
     struct LIOdometryInfo
     {
         double time;
@@ -103,6 +112,7 @@ public:
         V3T ba, bg;
         V3T grav;
         CloudPtr map;
+        CloudXYZPtr vgicp_center;
         std::shared_ptr<VMap> vmap;
         pcl::IndicesPtr filtered_indices;
         std::shared_ptr<std::vector<voxelmap::ptpl>> ptpl;
@@ -272,6 +282,8 @@ private:
 
     // void computeHxAndRinvKDTree(std::vector<voxelmap::ptpl>& ptpls, IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& R, const StateType& Xk,const StateType& X);
 
+    void computeHxAndRinvVGICP(IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& R, const StateType& Xk,const StateType& X, float cauchy_dist=-1.0);
+
     void staticStateIMUInitialize();
 
     IESKF kf;
@@ -289,7 +301,6 @@ private:
     std::mutex meas_pack_mutex_, imu_data_mutex_;
     std::condition_variable meas_pack_cond_;
 
-    std::optional<std::function<void(std::shared_ptr<CallbackInfo>)>> updateCallback;
 
     static constexpr double GRAVITY = 9.81;
     double imu_acc_scale = 1.0;
@@ -300,22 +311,30 @@ private:
     bool inited_error_cov_ = false;
     bool inited_gravity_ = false;
 
+    /* update callback info */
+    std::optional<std::function<void(std::shared_ptr<CallbackInfo>)>> updateCallback;
+
     CloudPtr map_for_publish = pcl::make_shared<CloudT>();
     pcl::IndicesPtr map_indices;
     std::shared_ptr<std::vector<voxelmap::ptpl>> ptpl_cb = std::make_shared<std::vector<voxelmap::ptpl>>();
-
     std::shared_ptr<VMap> vmap = std::make_shared<VMap>();
+    CloudXYZPtr vgicp_center = CloudXYZPtr(new CloudXYZ);
+    std::shared_ptr<CallbackInfo> ret_info = std::shared_ptr<CallbackInfo>(new CallbackInfo);
+
     KDTree kdtree;
     CloudVmapPtr init_vmap = pcl::make_shared<CloudVMap>();
-    bool vmap_init_complete = false;
+
+    gicp::VGICP vgicp;
 
     // TODO: 超参数放在 config 中
+    ObservationMethod observation_method = METHOD_VGICP;
+
     double lidar_range_cov = 1e-4, lidar_angle_cov = 1e-6;
-    double max_voxel_size = 2.0;
-    int max_layer = 3.0;
+    double max_voxel_size = 3.0;
+    int max_layer = 4.0;
     std::vector<int> layer_size = std::vector<int>({20, 10, 10, 5, 5});
     int max_point_size = 200; int max_cov_point_size = 200; 
-    double plane_threshold_kdtree = 0.1;
+    double plane_threshold_kdtree = 0.05;
     double plane_threshold_vmap = 0.01;
 
     int MAX_H_DIMENSION = 1800;
@@ -323,7 +342,7 @@ private:
     // 超参数
     int NUM_MAX_ITERATIONS = 5;
 
-    int time_for_init_map = 8;
+    double vgpicp_pre_map_time = 2.5;
 
     const int frame_residual_count = 2000;
     static constexpr int plane_N_search  = 5;

@@ -1,0 +1,17 @@
+lidar_topic: "/points_raw"
+imu_topic: "/imu_raw"
+
+
+lidar_type: "velodyne"
+
+extrinsic:
+  rotation: [0.0, 0.0, 1.0, 0.0] # Quaternion [w,x,y,z]
+  translation: [ 0.04165, 0.02326, -0.0284 ] # Translation vector
+
+
+publish_voxmap: true
+
+
+
+
+

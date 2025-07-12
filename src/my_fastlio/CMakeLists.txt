@@ -153,6 +153,7 @@ add_library(${PROJECT_NAME}
   src/${PROJECT_NAME}/my_fastlio.cpp
   src/mapper/ikd_Tree.cpp
   src/mapper/voxel_map_util.cpp
+  src/mapper/ivgicp.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC

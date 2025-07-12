@@ -1,8 +1,11 @@
 lidar_topic: "/livox/lidar"
 imu_topic: "/livox/imu"
 
+# liar_topic: "/camera/depth/color/points"
+
 
 lidar_type: "livox" 
+# lidar_type: "l515" 
 
 extrinsic:
   rotation: [1.0, 0.0, 0.0, 0.0] # Quaternion [w,x,y,z]

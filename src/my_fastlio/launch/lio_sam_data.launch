@@ -4,7 +4,7 @@
     <!-- Set parameters -->
     <param name="use_sim_time" value="false" />
 
-    <rosparam command="load" file="$(find my_fastlio)/config/my_fastlio.yaml" />
+    <rosparam command="load" file="$(find my_fastlio)/config/lio_sam_data.yaml" />
 
     <!-- 添加rviz -->
     <node pkg="rviz" type="rviz" name="rviz" output="screen" args="-d $(find my_fastlio)/rviz/loam_livox2.rviz">

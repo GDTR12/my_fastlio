@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <csignal>
 #include <memory>
@@ -16,10 +17,12 @@
 #include "my_fastlio/my_fastlio.hpp"
 #include "livox_ros_driver/CustomMsg.h"
 #include "manifold/manifold.hpp"
+#include "pcl/common/io.h"
 #include "pcl/common/transforms.h"
 #include "pcl/filters/random_sample.h"
 #include "pcl/filters/voxel_grid.h"
 #include "pcl/impl/point_types.hpp"
+#include "pcl/pcl_macros.h"
 #include "pcl/point_cloud.h"
 #include "ros/publisher.h"
 #include "ros/rate.h"
@@ -42,12 +45,38 @@ ros::Publisher pub_lidar_source;
 ros::Publisher pub_odometry;
 ros::Publisher pub_path;
 ros::Publisher pub_map;
+ros::Publisher pub_dense_map;
 ros::Publisher pub_current;
 ros::Publisher pub_vmap;
 ros::Publisher pub_ptpl_p;
 ros::Publisher pub_ptpl_normal;
+ros::Publisher pub_vgicp_center;
 nav_msgs::Path path;
 bool is_pub_voxelmap;
+
+
+struct PointXYZIRT
+{
+    PCL_ADD_POINT4D
+    // PCL_ADD_INTENSITY
+    float intensity;
+    uint16_t ring;
+    float time;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW   // make sure our new allocators are aligned
+} EIGEN_ALIGN16;                    // enforce SSE padding for correct memory alignment
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(PointXYZIRT,
+(float,x,x)
+(float,y,y)
+(float,z,z)
+(float, intensity, intensity)
+(pcl::uint16_t,ring,ring)
+(float ,time,time)
+)
+
+typedef PointXYZIRT PointVelodyne;
+typedef pcl::PointCloud<PointVelodyne> CloudVelodyne;
+typedef pcl::shared_ptr<CloudVelodyne> CloudVelodynePtr;
 
 void paramFetch(ros::NodeHandle& nh)
 {
@@ -79,14 +108,32 @@ void imuCallback(const sensor_msgs::ImuConstPtr& imu_msg)
 
 void lidarPointCloud2Callback(const sensor_msgs::PointCloud2ConstPtr& lidar_msg)
 {
-    // ROS_INFO("Lidar data received");
-    // CloudXYZPtr cloud(new CloudXYZ);
-    // pcl::fromROSMsg(*lidar_msg, *cloud);
+    ROS_INFO("Lidar data received");
+    std::shared_ptr<LidarData> cloud(new LidarData);
+    CloudVelodyne cloud_velo;
+    pcl::fromROSMsg(*lidar_msg, cloud_velo);
 
-    // cloud->header.stamp = lidar_msg->header.stamp.toSec();
-    // cloud->header.frame_id = lidar_msg->header.frame_id;
+    cloud->cloud->resize(cloud_velo.points.size());
+    cloud->cloud->is_dense = cloud_velo.is_dense;
+    cloud->cloud->header = cloud_velo.header;
+    cloud->cloud->header.seq = 0;
+    for(int i = 0; i < cloud_velo.points.size(); i++){
+        PointT p;
+        if (cloud_velo.points[i].x * cloud_velo.points[i].x + cloud_velo.points[i].y * cloud_velo.points[i].y + cloud_velo.points[i].z * cloud_velo.points[i].z > 4
+            && (abs(cloud_velo.points[i].x - cloud_velo.points[i-1].x) > 1e-7 || abs(cloud_velo.points[i].y - cloud_velo.points[i-1].y) > 1e-7 || abs(cloud_velo.points[i].z - cloud_velo.points[i-1].z) > 1e-7))
+        {
+            p.getVector3fMap() = cloud_velo[i].getVector3fMap();
+            p.intensity = cloud_velo[i].intensity;
+            p.curvature = cloud_velo[i].time;
+            cloud->cloud->points.push_back(p);
+        }
+    }
+    cloud->cloud->height = 1;
+    cloud->cloud->width = cloud->cloud->points.size();
+    cloud->time = lidar_msg->header.stamp.toSec();
 
-    // lio.lidarAsyncPushLidar(cloud);
+    lio.lidarAsyncPushLidar(cloud);
+    pub_lidar_source.publish(lidar_msg);
 }
 
 void pubSinglePlane(visualization_msgs::MarkerArray &plane_pub,
@@ -185,25 +232,26 @@ void lioUpdateCallback(std::shared_ptr<MyFastLIO::CallbackInfo> info)
     static int id_cloud = 0;
     if (info->map != nullptr) {
         if (info->map->size() > 0){
-            CloudPtr filtered_pcd(new CloudT);
-            // pcl::RandomSample<PointT> filter;
-            // // filter.setLeafSize(0.2, 0.2, 0.2);
-            // filter.setSample(10000);
-            // filter.setInputCloud(info->map);
-            // // filter.setDownsampleAllData(true);                // *** 保留 intensity 和 normal 字段 ***
-            // // filter.setMinimumPointsNumberPerVoxel(1);         // 每个体素至少保留 1 个点（可选）
-            // filter.filter(*filtered_pcd);
-            // CloudT pub_cloud;
-            pcl::transformPointCloud(*info->map, *filtered_pcd, info->pose.matrix().cast<float>());
-            sensor_msgs::PointCloud2 map_msg;
-            pcl::toROSMsg(*filtered_pcd, map_msg);
-            map_msg.header.frame_id = "map";
-            map_msg.header.seq = id_cloud++;
-            map_msg.header.stamp = ros::Time::now();
+            CloudPtr map_transfored(new CloudT);
+            CloudPtr dense_map_transfored(new CloudT);
+            CloudT filtered_pcd;
+            pcl::VoxelGrid<PointT> filter;
+            filter.setLeafSize(0.5, 0.5, 0.5);
+            filter.setInputCloud(info->map);
+            filter.filter(filtered_pcd);
+            pcl::transformPointCloud(*info->map, *dense_map_transfored, info->pose.matrix().cast<float>());
+            pcl::transformPointCloud(filtered_pcd, *map_transfored, info->pose.matrix().cast<float>());
+            sensor_msgs::PointCloud2 map_msg, dense_map_msg;
+            pcl::toROSMsg(*map_transfored, map_msg);
+            pcl::toROSMsg(*dense_map_transfored, dense_map_msg);
+            map_msg.header.frame_id = dense_map_msg.header.frame_id = "map";
+            map_msg.header.seq = dense_map_msg.header.seq = id_cloud++;
+            map_msg.header.stamp = dense_map_msg.header.stamp = ros::Time::now();
             if (id_cloud % 5 == 0){
                 pub_map.publish(map_msg);
+                pub_dense_map.publish(dense_map_msg);
             }
-            pub_current.publish(map_msg);
+            pub_current.publish(dense_map_msg);
         }
     }
     if (is_pub_voxelmap){
@@ -233,6 +281,7 @@ void lioUpdateCallback(std::shared_ptr<MyFastLIO::CallbackInfo> info)
             
             pcl::PointXYZRGB p_pcd;
             p_pcd.getVector3fMap() = (info->pose * ptpl.point).cast<float>();
+            // p_pcd.getVector3fMap() = (ptpl.point).cast<float>();
             
             p_pcd.r = 255 * r; p_pcd.b = 255 * b; p_pcd.g = 255 * g;
             pcd.push_back(p_pcd);
@@ -266,6 +315,9 @@ void lioUpdateCallback(std::shared_ptr<MyFastLIO::CallbackInfo> info)
             end.x = p_cent.x + scale * n.x();
             end.y = p_cent.y + scale * n.y();
             end.z = p_cent.z + scale * n.z();
+            // end.x = p_pcd.x;
+            // end.y = p_pcd.y;
+            // end.z = p_pcd.z;
 
             normal.points.push_back(start);
             normal.points.push_back(end);
@@ -279,6 +331,16 @@ void lioUpdateCallback(std::shared_ptr<MyFastLIO::CallbackInfo> info)
         pub_ptpl_p.publish(msg_ptpl_p);
         pub_ptpl_normal.publish(msg_ptpl_normal);
     }
+    if (info->vgicp_center != nullptr){
+        if (!info->vgicp_center->empty()){
+            sensor_msgs::PointCloud2 msg_vgicp_center;
+            pcl::toROSMsg(*info->vgicp_center, msg_vgicp_center);
+            msg_vgicp_center.header.frame_id = "map";
+            msg_vgicp_center.header.stamp = ros::Time::now();
+            pub_vgicp_center.publish(msg_vgicp_center);
+        }
+    }
+
     // std::cout << "update: " << "time: " << info->time << "\nq: " << info->pose.unit_quaternion().coeffs().transpose() << "\nt: " << info->pose.translation().transpose() << std::endl;
     // std::cout << "velocity: " << info->vel.transpose() << std::endl;
 }
@@ -329,10 +391,12 @@ int main(int argc, char** argv)
     pub_odometry = nh.advertise<nav_msgs::Odometry>("/my_fastlio/odometry", 100);
     pub_path = nh.advertise<nav_msgs::Path>("/my_fastlio/path", 100);
     pub_map = nh.advertise<sensor_msgs::PointCloud2>("/my_fastlio/map", 10);
+    pub_dense_map = nh.advertise<sensor_msgs::PointCloud2>("/my_fastlio/dense_map", 10);
     pub_vmap = nh.advertise<MsgVmap>("/my_fastlio/vmap", 10);
     pub_ptpl_p = nh.advertise<sensor_msgs::PointCloud2>("/my_fastlio/ptpl_p", 10);
     pub_ptpl_normal = nh.advertise<MsgVmap>("/my_fastlio/ptpl_normal", 10);
     pub_current = nh.advertise<sensor_msgs::PointCloud2>("/my_fastlio/current", 10);
+    pub_vgicp_center = nh.advertise<sensor_msgs::PointCloud2>("/my_fastlio/vgicp_center", 10);
 
     std::string lidar_type;
     nh.getParam("lidar_type", lidar_type);
