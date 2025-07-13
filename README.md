@@ -1,7 +1,4 @@
 # My_FastLIO
----
-
-## 🇬🇧 English Version: `README_EN.md`
 
 <div align="center">
   <img src="assets/my_fastlio_pic.png" width="600"/>
