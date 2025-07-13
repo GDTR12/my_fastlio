@@ -4,9 +4,7 @@
   <img src="assets/my_fastlio_pic.png" width="600"/>
 </div>
 
-语言: 中文 | [English](README.md)
-
----
+<p align="center">语言: 中文 | <a href="README.md">English</a></p>
 
 ## 🧭 项目简介
 
@@ -38,13 +36,13 @@ IESKF 实现主要参考 [FAST-LIO2](https://arxiv.org/pdf/2107.06829)。部分�
 ## 🛠️ 编译方式
 
 ```bash
-mkdir catkin_ws
-cd catkin_ws
-git clone git@github.com:GDTR12/my_fastlio.git
+mkdir catkin_ws && cd catkin_ws
+git clone https://github.com/GDTR12/my_fastlio.git
+git submodule update --init --recursive
 catkin_make
 ```
 
-## 3. 🚀 运行
+## 🚀 运行
 目前支持的激光雷达:
 - livox_avia
 - 其他旋转激光雷达

@@ -4,9 +4,7 @@
   <img src="assets/my_fastlio_pic.png" width="600"/>
 </div>
 
-Language: [中文](README.md) | English
-
----
+<p align="center">语言: <a href="README_ZH.md">中文</a> | English</p>
 
 ## 🧭 Introduction
 
@@ -38,10 +36,9 @@ We have experimented with several observation models, including:
 ## 🛠️ Build Instructions
 
 ```bash
-mkdir -p catkin_ws/src
-cd catkin_ws/src
-git clone git@github.com:GDTR12/my_fastlio.git
-cd ..
+mkdir catkin_ws && cd catkin_ws
+git clone https://github.com/GDTR12/my_fastlio.git
+git submodule update --init --recursive
 catkin_make
 ```
 
