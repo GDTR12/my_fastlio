@@ -284,7 +284,7 @@ private:
 
     void computeHxAndRinvVGICP(IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& R, const StateType& Xk,const StateType& X, float cauchy_dist=-1.0);
 
-    void staticStateIMUInitialize();
+    void lioInitialization();
 
     IESKF kf;
 
@@ -342,7 +342,7 @@ private:
     // 超参数
     int NUM_MAX_ITERATIONS = 5;
 
-    double vgpicp_pre_map_time = 2.5;
+    double vgpicp_pre_map_time = 7;
 
     const int frame_residual_count = 2000;
     static constexpr int plane_N_search  = 5;

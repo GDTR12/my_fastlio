@@ -4,6 +4,15 @@
   <img src="assets/my_fastlio_pic.png" width="600"/>
 </div>
 
+<div align="center">
+  <img src="assets/show1.jpg" width="600"/>
+</div>
+
+
+<div align="center">
+  <img src="assets/show2.jpg" width="600"/>
+</div>
+
 <p align="center">语言: <a href="README_ZH.md">中文</a> | English</p>
 
 ## 🧭 Introduction

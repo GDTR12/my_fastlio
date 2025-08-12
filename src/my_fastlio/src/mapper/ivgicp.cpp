@@ -24,47 +24,69 @@ void VGICP::setSourceCloud(CloudPtr input, bool voxel_downsample, float voxel_do
     CloudPtr cloud = input;
     if (voxel_downsample){
         CloudPtr downcloud(new Cloud);
-        pcl::VoxelGrid<Point> grid;
-        grid.setLeafSize(voxel_downsample_size, voxel_downsample_size, voxel_downsample_size);
-        grid.setInputCloud(input);
-        grid.filter(*downcloud);
+        std::unordered_map<VoxelIndex, Voxel, VoxelIndexHash> voxeles;
+        for (int i = 0; i < cloud->size(); i++)
+        {
+            auto id = point2Index(cloud->at(i), voxel_downsample_size);
+            Eigen::Vector3d point = cloud->at(i).getVector3fMap().cast<double>();
+            voxeles[id].sum += point;
+            voxeles[id].outer += point * point.transpose();
+            voxeles[id].N += 1;
+        }
+        points_cov.resize(voxeles.size());
+        downcloud->resize(voxeles.size());
+        int i = 0;
+        for (const auto& [id, voxel] : voxeles)
+        {
+            Point p;
+            p.getVector3fMap() = (voxel.sum / voxel.N).cast<float>();
+            downcloud->at(i) = p;
+            points_cov[i].point = p.getVector3fMap().cast<double>();
+            points_cov[i].N = voxel.N;
+            if (voxel.N < 6){
+                points_cov[i].cov.setZero();
+            }else{
+                points_cov[i].cov = (voxel.outer - voxel.sum * voxel.mean.transpose()) / float(voxel.N);
+            }
+            i++;
+        }
         cloud = downcloud;
-    }
+   }
     src_cloud = cloud;
     src_kdtree.setInputCloud(src_cloud);
-    computeSourceCloudCovariance();
+    // computeSourceCloudCovariance();
 }
 
-void VGICP::computeSourceCloudCovariance()
-{
-    if (src_cloud == nullptr){
-        throw  std::runtime_error("Source Cloud is null");
-    }
-    if (src_cloud->empty()){
-        throw  std::runtime_error("Source Cloud is empty");
-    }
+// void VGICP::computeSourceCloudCovariance()
+// {
+//     if (src_cloud == nullptr){
+//         throw  std::runtime_error("Source Cloud is null");
+//     }
+//     if (src_cloud->empty()){
+//         throw  std::runtime_error("Source Cloud is empty");
+//     }
 
-    points_cov.clear();
-    points_cov.resize(src_cloud->size());
+//     points_cov.clear();
+//     points_cov.resize(src_cloud->size());
 
-    #pragma omp parallel for num_threads(omp_num_threads) schedule(static, 8)
-    for (int i = 0; i < src_cloud->size(); i++)
-    {
-        std::vector<int> indices;
-        std::vector<float> dists;
-        src_kdtree.nearestKSearch(src_cloud->at(i), cov_nearist_k, indices, dists);
+//     #pragma omp parallel for num_threads(omp_num_threads) schedule(static, 8)
+//     for (int i = 0; i < src_cloud->size(); i++)
+//     {
+//         std::vector<int> indices;
+//         std::vector<float> dists;
+//         src_kdtree.nearestKSearch(src_cloud->at(i), cov_nearist_k, indices, dists);
 
-        Eigen::Matrix<double, 3, Eigen::Dynamic> neighbors(3, indices.size());
-        for (int j = 0; j < indices.size(); j++){
-            neighbors.col(j) = src_cloud->at(indices[j]).getVector3fMap().template cast<double>();
-        }
-        // points_cov[i].point = neighbors.rowwise().mean().eval();
-        points_cov[i].point = src_cloud->at(i).getVector3fMap().cast<double>();
-        neighbors.colwise() -= neighbors.rowwise().mean().eval();
-        points_cov[i].cov = neighbors * neighbors.transpose() / neighbors.cols();
-        // points_cov[i].cov = Eigen::Matrix3d::Zero();
-    }
-}
+//         Eigen::Matrix<double, 3, Eigen::Dynamic> neighbors(3, indices.size());
+//         for (int j = 0; j < indices.size(); j++){
+//             neighbors.col(j) = src_cloud->at(indices[j]).getVector3fMap().template cast<double>();
+//         }
+//         // points_cov[i].point = neighbors.rowwise().mean().eval();
+//         points_cov[i].point = src_cloud->at(i).getVector3fMap().cast<double>();
+//         neighbors.colwise() -= neighbors.rowwise().mean().eval();
+//         points_cov[i].cov = neighbors * neighbors.transpose() / neighbors.cols();
+//         // points_cov[i].cov = Eigen::Matrix3d::Zero();
+//     }
+// }
 
 void VGICP::setSourceTransformation(const Eigen::Matrix4d& pose, bool update_association)
 {

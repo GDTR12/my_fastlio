@@ -46,9 +46,14 @@ public:
 
     struct VoxelIndexHash {
         std::size_t operator()(const GICPVoxelIndex& idx) const {
-            return ((std::hash<int>()(idx.x()) ^ 
-                    (std::hash<int>()(idx.y()) << 1)) >> 1) ^ 
-                    (std::hash<int>()(idx.z()) << 1);
+            // return ((std::hash<int>()(idx.x()) ^ 
+            //         (std::hash<int>()(idx.y()) << 1)) >> 1) ^ 
+            //         (std::hash<int>()(idx.z()) << 1);
+            size_t x = static_cast<size_t>(idx[0]);
+            size_t y = static_cast<size_t>(idx[1]);
+            size_t z = static_cast<size_t>(idx[2]);
+
+            return ((((z)*HASH_P_) % MAX_N_ + (y)) * HASH_P_) % MAX_N_ + (x);
         }
     };
 
@@ -148,6 +153,9 @@ private:
 
     // float min_point_density = 10 * voxel_size * voxel_size * voxel_size;
     float min_point_density = 5;
+
+    static const size_t HASH_P_{116101};
+    static const size_t MAX_N_{10000000000};
 
 };
 

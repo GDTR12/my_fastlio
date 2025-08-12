@@ -132,6 +132,7 @@ public:
             ErrorStateType delta = (-K * zk - I_KH * Jk_inv * (Xk.boxminus(X0)));
             // std::cout << "j dx: " << (Jk_inv * (Xk.boxminus(X0))).transpose() << std::endl;
             // std::cout << "k zk: " << (K * zk).transpose() << std::endl;
+            // std::cout << delta.transpose() << std::endl;
             Xk.boxplus(delta);
 
             auto t2 = std::chrono::high_resolution_clock::now();

@@ -65,13 +65,32 @@ struct PointXYZIRT
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW   // make sure our new allocators are aligned
 } EIGEN_ALIGN16;                    // enforce SSE padding for correct memory alignment
 
+struct PointXYZIRT2
+{
+    PCL_ADD_POINT4D
+    // PCL_ADD_INTENSITY
+    uint8_t intensity;
+    uint16_t ring;
+    double time;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW   // make sure our new allocators are aligned
+} EIGEN_ALIGN16;                    // enforce SSE padding for correct memory alignment
+
 POINT_CLOUD_REGISTER_POINT_STRUCT(PointXYZIRT,
 (float,x,x)
 (float,y,y)
 (float,z,z)
 (float, intensity, intensity)
-(pcl::uint16_t,ring,ring)
+(uint16_t,ring,ring)
 (float ,time,time)
+)
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(PointXYZIRT2,
+(float,x,x)
+(float,y,y)
+(float,z,z)
+(uint8_t, intensity, intensity)
+(uint16_t,ring,ring)
+(double ,time,timestamp)
 )
 
 typedef PointXYZIRT PointVelodyne;

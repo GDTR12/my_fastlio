@@ -14,10 +14,13 @@
 #include "pcl/impl/point_types.hpp"
 #include "pcl/io/pcd_io.h"
 #include "pcl/make_shared.h"
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <functional>
+#include <iomanip>
+#include <ios>
 #include <memory>
 #include <mutex>
 #include <sophus/se3.hpp>
@@ -103,7 +106,9 @@ bool MyFastLIO::lidarAsyncPushLidar(std::shared_ptr<LidarData> lidar_)
     while (lidar_data_queue_.size() > 1){
         std::shared_ptr<LidarData> lidar = lidar_data_queue_.front();
         double end_time = lidar_data_queue_[1]->time;
-        if (end_time > imu_data_queue_.back()->time) return true;
+        if (end_time > imu_data_queue_.back()->time) {
+            break;
+        }
         
         auto meas = std::make_shared<MeasurePack>();
         while (!imu_data_queue_.empty()){
@@ -290,9 +295,8 @@ void MyFastLIO::computeFxAndFw(IESKF::ErrorPropagateFx& fx, IESKF::ErrorPropagat
     fx.block<3,3>(IDX_R * 3, IDX_R * 3) = SO3Exp(-dt * (getM(u, w) - getM(X, bw))).matrix();
     fx.block<3,3>(IDX_v * 3, IDX_R * 3) = -dt * getM(X, R).matrix() * SO3Hat(getM(u, a) - getM(X, ba));
     fx.block<3,3>(IDX_v * 3, IDX_ba * 3) =  -dt * getM(X, R).matrix();
-    // fx.block<3,2>(IDX_v * 3, IDX_g * 3) = Eigen::Matrix<double, 3, 2>::Zero();
-    Eigen::Matrix<double,2,1> delta_g = delta_x.segment<2>(IDX_g * 3);
     // TODO:
+    Eigen::Matrix<double,2,1> delta_g = delta_x.segment<2>(IDX_g * 3);
     fx.block<3,2>(IDX_v * 3, IDX_g * 3) = dt * std::get<7>(X.data).boxplusJacobian(delta_g);
     // fx.block<3,2>(IDX_v * 3, IDX_g * 3).setZero();
 
@@ -322,7 +326,7 @@ void MyFastLIO::start()
 }
 
 
-void MyFastLIO::staticStateIMUInitialize()
+void MyFastLIO::lioInitialization()
 {
     std::unique_lock<std::mutex> lock(meas_pack_mutex_);
     meas_pack_cond_.wait(lock, [this]{
@@ -548,13 +552,15 @@ void MyFastLIO::computeHxAndRinvWithCov(std::vector<voxelmap::ptpl>& ptpl, IESKF
 
 void MyFastLIO::computeHxAndRinvVGICP(IESKF::ObserveResult& zk, IESKF::ObserveMatrix& H, IESKF::ObserveCovarianceType& Rinv, const StateType& Xk,const StateType& X, float cauchy_loss)
 {
+    std::chrono::time_point<std::chrono::high_resolution_clock> t0, t1, t2, t3, t4, t5;
 
-    auto t_1 = std::chrono::high_resolution_clock::now();
+    t0 = std::chrono::high_resolution_clock::now();
     Sophus::SE3d T_WtoIi(getM(Xk, R), getM(Xk, p));
     Sophus::SE3d T_ItoL(getM(Xk, R_ItoL),  getM(Xk, p_ItoL));
     Sophus::SE3d T_WtoLi = T_WtoIi * T_ItoL;
     vgicp.setSourceTransformation(T_WtoLi.matrix(), true);
     const auto& association = vgicp.getAssociation();
+    t1 = std::chrono::high_resolution_clock::now();
 
     if (cauchy_loss > 0.0){
         zk.resize(association.size(), 1);
@@ -562,11 +568,6 @@ void MyFastLIO::computeHxAndRinvVGICP(IESKF::ObserveResult& zk, IESKF::ObserveMa
         zk.resize(3 * association.size(), 1);
     }
 
-    // for (int i = 0; i < association.size(); i++){
-    //     // std::cout << "(" << association[i].N << ", " << association[i].mean.trace() << ", " << association[i].cov.trace() << ") ";
-    //     std::cout << "(" << association[i].cov.array() << ") ";
-    // }
-    // std::cout << std::endl;
 
     H.resize(zk.rows(), StateType::DOF);
     Rinv.resize(zk.rows(), zk.rows());
@@ -578,6 +579,8 @@ void MyFastLIO::computeHxAndRinvVGICP(IESKF::ObserveResult& zk, IESKF::ObserveMa
 
     std::vector<Eigen::Triplet<double>> triplets_H;
     std::vector<Eigen::Triplet<double>> triplets_R;
+    triplets_H.reserve(2 * 9 * association.size());
+    triplets_R.reserve(1 * 9 * association.size());
 
     M3T R = getM(Xk, R).matrix();
     V3T p = getM(Xk, p);
@@ -587,6 +590,9 @@ void MyFastLIO::computeHxAndRinvVGICP(IESKF::ObserveResult& zk, IESKF::ObserveMa
     auto& ptpls = *ptpl_cb;
     ptpls.clear();
     ptpls.resize(association.size());
+    
+    t2 = std::chrono::high_resolution_clock::now();
+    
     if (cauchy_loss > 0){
         // #pragma omp parallel for num_threads(8) schedule(static, 8)
         for (int i = 0; i < association.size(); i ++)
@@ -614,7 +620,6 @@ void MyFastLIO::computeHxAndRinvVGICP(IESKF::ObserveResult& zk, IESKF::ObserveMa
         }
     }else{
 
-        auto t0 = std::chrono::high_resolution_clock::now();
         // #pragma omp parallel for num_threads(8) schedule(static)
         for (int i = 0; i < association.size(); i ++)
         {
@@ -622,6 +627,7 @@ void MyFastLIO::computeHxAndRinvVGICP(IESKF::ObserveResult& zk, IESKF::ObserveMa
             V3T p_inIi = R_ItoL * association[i].point + p_ItoL;
             V3T res = voxel.mean - R * p_inIi - p;
             M3T cov = voxel.cov + R_WtoL * association[i].cov * R_WtoL.transpose();
+            cov += 1e-6 * M3T::Identity();
             zk.segment<3>(i * 3) = res;
             // Rinv.block<3,3>(i * 3,i * 3) = cov.ldlt().solve(M3T::Identity());
             // H.block<3, 3>(i * 3, IDX_p * 3) = -M3T::Identity();
@@ -640,30 +646,27 @@ void MyFastLIO::computeHxAndRinvVGICP(IESKF::ObserveResult& zk, IESKF::ObserveMa
             // eigenSparseBlockSet(triplets_H, R * R_ItoL * SO3Hat(association[i].point), i * 3, IDX_R_ItoL);
             // eigenSparseBlockSet(triplets_H, -R_WtoL, i * 3, IDX_p_ItoL);
 
-            // auto& ptpl = ptpls[i];
-            // ptpl.center = voxel.mean;
-            // ptpl.point = association[i].point;
-            // Eigen::JacobiSVD<M3T> svd(cov, Eigen::ComputeFullU);
-            // ptpl.normal = svd.matrixU().col(2);  // 对应最小奇异值;
+            auto& ptpl = ptpls[i];
+            ptpl.center = voxel.mean;
+            ptpl.point = association[i].point;
+            Eigen::JacobiSVD<M3T> svd(cov, Eigen::ComputeFullU);
+            ptpl.normal = svd.matrixU().col(2);  // 对应最小奇异值;
 
         }
 
-        // std::cout << "time: " << 
-        //     float(std::chrono::duration_cast<std::chrono::microseconds>(t0-t_1).count()) / float(1e3) << 
-        //     ", " << float(std::chrono::duration_cast<std::chrono::microseconds>(t1-t0).count()) / float(1e3) << 
-        //     ", " << float(std::chrono::duration_cast<std::chrono::microseconds>(t2-t1).count()) / float(1e3) << std::endl;
     }
+    t3 = std::chrono::high_resolution_clock::now();
 
-    auto t1 = std::chrono::high_resolution_clock::now();
-    // for (int i = 0; i < association.size(); i ++)
-    // {
-    //     zk.segment<3>(i * 3) = zk_cache[i];
-    //     Rinv.block<3,3>(i * 3,i * 3) = Rinv_cache[i];
-    //     H.block<3, 12>(i * 3, 0) = H_cache[i];
-    // }
     Rinv.setFromTriplets(triplets_R.begin(), triplets_R.end());
     H.setFromTriplets(triplets_H.begin(), triplets_H.end());
-    auto t2 = std::chrono::high_resolution_clock::now();
+
+    t4 = std::chrono::high_resolution_clock::now();
+
+    std::cout << "time: " << association.size() << ", " << 
+        float(std::chrono::duration_cast<std::chrono::microseconds>(t1-t0).count()) / float(1e3) << 
+        ", " << float(std::chrono::duration_cast<std::chrono::microseconds>(t2-t1).count()) / float(1e3) << 
+        ", " << float(std::chrono::duration_cast<std::chrono::microseconds>(t3-t2).count()) / float(1e3) << 
+        ", " << float(std::chrono::duration_cast<std::chrono::microseconds>(t4-t3).count()) / float(1e3) << std::endl;
 }
 
 
@@ -889,6 +892,7 @@ void MyFastLIO::buildmapAndUpdate(std::shared_ptr<MeasurePack> meas)
         sample.setInputCloud(xyz_cloud);
         sample.filter(*filtered_cloud);
         
+        Sophus::SE3d prev_pose = Sophus::SE3d(getM(kf.normal_state, R), getM(kf.normal_state, p));
         static bool vgicp_pre_map_inited = false;
 
         if (kdtree.size() == 0){
@@ -1010,7 +1014,7 @@ void MyFastLIO::buildmapAndUpdate(std::shared_ptr<MeasurePack> meas)
                 cent_p.getVector3fMap() = idx.getCenter(vsize).cast<float>();
                 vgicp_center->push_back(cent_p);
             }
-            vgicp.setSourceCloud(filtered_cloud);
+            vgicp.setSourceCloud(xyz_cloud, true, 0.5);
             std::cout << "[preprocessing] compute cloud convariance time: " << slam_utils::TimerHelper::end(start_set_source) << " ms" << std::endl;
             // if (vgicp.empty()){
             //     Sophus::SE3d T_WtoIi(getM(kf.normal_state, R), getM(kf.normal_state, p));
@@ -1043,9 +1047,17 @@ void MyFastLIO::buildmapAndUpdate(std::shared_ptr<MeasurePack> meas)
                 Sophus::SE3d T_WtoLi = T_WtoIi * T_ItoL;
                 // Sophus::SE3d T_WtoLi = T_ItoL;
                 vgicp.setSourceTransformation(T_WtoLi.matrix(), false);
-                vgicp.pushSourceIntoMap();
-                std::cout << "[mapping] total time: " << slam_utils::TimerHelper::end(start_push_points) << " ms" << std::endl;;
 
+                Sophus::SE3d delta_p = prev_pose.inverse() * T_WtoIi;
+
+                // if (info.H_rows / 3.0f < 1000 ||
+                //     delta_p.translation().norm() > 0.5 ||
+                //     delta_p.so3().log().norm() > 0.18){
+                    vgicp.pushSourceIntoMap();
+                    std::cout << "[mapping] total time: " << slam_utils::TimerHelper::end(start_push_points) << " ms" << std::endl;;
+                // }
+
+                prev_pose = T_WtoIi;
                 // auto& voxeles = vgicp.getVoxeles();
                 // std::cout << "voxels count:" << voxeles.size() << std::endl;
                 // CloudXYZ cloud_vgicp;
@@ -1068,7 +1080,7 @@ void MyFastLIO::buildmapAndUpdate(std::shared_ptr<MeasurePack> meas)
 
 void MyFastLIO::lioThread()
 {
-    staticStateIMUInitialize();
+    lioInitialization();
     while (true)
     {
         handlePack();
@@ -1091,9 +1103,9 @@ void MyFastLIO::lioThread()
             // std::cout << "q_ItoL: " << getM(kf.normal_state, R_ItoL).unit_quaternion().coeffs().transpose() << std::endl;
             // std::cout << "p_ItoL: " << getM(kf.normal_state, p_ItoL).transpose() << std::endl;
             // std::cout << "v: " << getM(kf.normal_state, v).transpose() << std::endl;
-            // std::cout << "bw: " << getM(kf.normal_state, bw).transpose() << std::endl;
-            // std::cout << "ba: " << getM(kf.normal_state, ba).transpose() << std::endl;
-            // std::cout << "g: " << getM(kf.normal_state, g).transpose() << std::endl;
+            std::cout << "bw: " << getM(kf.normal_state, bw).transpose() << std::endl;
+            std::cout << "ba: " << getM(kf.normal_state, ba).transpose() << std::endl;
+            std::cout << "g: " << getM(kf.normal_state, g).transpose() << std::endl;
             // exit(0);
             std::cout << "[user] callback time:" << slam_utils::TimerHelper::end(start_callback) << " ms" << std::endl;
             std::this_thread::sleep_for(1ms);
